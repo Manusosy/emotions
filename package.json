@@ -63,7 +63,7 @@
     "dompurify": "3.2.5",
     "dotenv": "16.5.0",
     "embla-carousel-react": "^8.0.0-rc18",
-    "framer-motion": "10.18.0",
+    "framer-motion": "12.10.5",
     "html2canvas": "1.4.1",
     "install": "^0.13.0",
     "jsonwebtoken": "^9.0.2",
