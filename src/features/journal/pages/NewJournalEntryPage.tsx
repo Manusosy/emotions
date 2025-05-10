@@ -1,406 +1,239 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
-import { useEditor, EditorContent } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
-import Highlight from "@tiptap/extension-highlight";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast";
-import { Calendar, ArrowRight, AlertCircle, Bold, Italic, List, ListOrdered, Highlighter, Type } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { useIsMobile } from "@/hooks/use-is-mobile";
-import { useAuth } from "@/hooks/use-auth";
-import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
-import { debounce } from "lodash";
-
-// Constants
-const AUTOSAVE_DELAY = 3000; // 3 seconds
-
-// Editor Toolbar Component
-const EditorToolbar = ({ editor }: { editor: any }) => {
-  if (!editor) {
-    return null;
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1 p-2 border-b bg-slate-50 rounded-t-md mb-1">
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => editor.chain().focus().toggleBold().run()}
-        className={editor.isActive('bold') ? 'bg-slate-200' : ''}
-      >
-        <Bold className="h-4 w-4" />
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => editor.chain().focus().toggleItalic().run()}
-        className={editor.isActive('italic') ? 'bg-slate-200' : ''}
-      >
-        <Italic className="h-4 w-4" />
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => editor.chain().focus().toggleBulletList().run()}
-        className={editor.isActive('bulletList') ? 'bg-slate-200' : ''}
-      >
-        <List className="h-4 w-4" />
-      </Button>
-      <Button
-        size="sm"
-        variant="ghost"
-        onClick={() => editor.chain().focus().toggleOrderedList().run()}
-        className={editor.isActive('orderedList') ? 'bg-slate-200' : ''}
-      >
-        <ListOrdered className="h-4 w-4" />
-      </Button>
-
-      {/* Text highlighting options */}
-      <div className="border-l mx-1 h-6"></div>
-      <span className="text-xs text-slate-500 mr-1">Highlight:</span>
-      <div className="flex gap-1">
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 rounded-full bg-yellow-100 hover:bg-yellow-200"
-          onClick={() => editor.chain().focus().toggleHighlight({ color: '#fef08a' }).run()}
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 rounded-full bg-blue-100 hover:bg-blue-200"
-          onClick={() => editor.chain().focus().toggleHighlight({ color: '#dbeafe' }).run()}
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 rounded-full bg-green-100 hover:bg-green-200"
-          onClick={() => editor.chain().focus().toggleHighlight({ color: '#dcfce7' }).run()}
-        />
-        <Button
-          size="sm"
-          variant="ghost"
-          className="h-7 w-7 p-0 rounded-full bg-orange-100 hover:bg-orange-200"
-          onClick={() => editor.chain().focus().toggleHighlight({ color: '#fed7aa' }).run()}
-        />
-      </div>
-    </div>
-  );
-};
+import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { ChevronLeft, Save, SmilePlus } from 'lucide-react';
+import { Slider } from '@/components/ui/slider';
+import { Badge } from '@/components/ui/badge';
+import { X } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAuth } from '@/hooks/use-auth';
+import { errorLog, devLog } from '@/utils/environment';
 
 export default function NewJournalEntryPage() {
   const navigate = useNavigate();
-  const { toast } = useToast();
-  const isMobile = useIsMobile();
-  const { user } = useAuth();
-  const [title, setTitle] = useState("");
-  const [selectedMood, setSelectedMood] = useState<string | null>(null);
-  const [tomorrowsPlan, setTomorrowsPlan] = useState("");
-  const [lastSaved, setLastSaved] = useState<Date | null>(null);
-  const [showMoodReminder, setShowMoodReminder] = useState(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const titleInputRef = useRef<HTMLInputElement>(null);
-  const [content, setContent] = useState("");
-
-  const todayDate = new Date().toLocaleDateString("en-US", {
-    weekday: "long",
-    year: "numeric",
-    month: "long",
-    day: "numeric",
-  });
-
-  const editor = useEditor({
-    extensions: [
-      StarterKit,
-      Highlight.configure({
-        multicolor: true,
-      }),
-    ],
-    content: content,
-    onUpdate: ({ editor }) => {
-      setContent(editor.getHTML());
-      autosaveContent(editor.getHTML());
-    },
-  });
-
-  // Add custom styles for the editor
-  useEffect(() => {
-    const style = document.createElement('style');
-    style.innerHTML = `
-      .ProseMirror ul {
-        list-style-type: disc;
-        padding-left: 1.2em;
-      }
-      
-      .ProseMirror ol {
-        list-style-type: decimal;
-        padding-left: 1.2em;
-      }
-      
-      .ProseMirror mark {
-        border-radius: 0.25em;
-        padding: 0 0.1em;
-      }
-      
-      /* Default yellow highlight */
-      .ProseMirror mark {
-        background-color: #fef08a;
-      }
-      
-      /* Color-specific highlights */
-      .ProseMirror mark[style*="#fef08a"] {
-        background-color: #fef08a !important;
-      }
-      
-      .ProseMirror mark[style*="#dbeafe"] {
-        background-color: #dbeafe !important;
-      }
-      
-      .ProseMirror mark[style*="#dcfce7"] {
-        background-color: #dcfce7 !important;
-      }
-      
-      .ProseMirror mark[style*="#fed7aa"] {
-        background-color: #fed7aa !important;
-      }
-    `;
-    document.head.appendChild(style);
+  const { isAuthenticated } = useAuth();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [title, setTitle] = useState('');
+  const [content, setContent] = useState('');
+  const [mood, setMood] = useState(5);
+  const [tags, setTags] = useState<string[]>([]);
+  const [tagInput, setTagInput] = useState('');
+  const [tomorrowsIntention, setTomorrowsIntention] = useState('');
+  
+  const handleGoBack = () => {
+    if (isAuthenticated) {
+      navigate('/patient-dashboard/journal');
+    } else {
+      navigate('/journal');
+    }
+  };
+  
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     
-    return () => {
-      document.head.removeChild(style);
-    };
-  }, []);
-
-  // Focus the title input on mount
-  useEffect(() => {
-    if (titleInputRef.current) {
-      titleInputRef.current.focus();
-    }
-  }, []);
-
-  // Add autosave function
-  const autosaveContent = useCallback(
-    debounce((htmlContent: string) => {
-      // Only autosave if we have content and a title
-      if ((htmlContent.trim().length > 0 || title.trim().length > 0) && !isSaving) {
-        // Show mood reminder if the user has written content but hasn't selected a mood
-        setShowMoodReminder((htmlContent.trim().length > 0 || title.trim().length > 0) && !selectedMood);
-        saveDraft();
-      }
-    }, 1000),
-    [title, selectedMood, isSaving]
-  );
-
-  // Save the journal entry
-  const saveEntry = useCallback(async () => {
-    if (!editor) return;
-
-    const content = editor.getHTML();
-    if (!content.trim() && !title.trim()) {
-      return; // Don't save empty entries
-    }
-
-    setIsSaving(true);
-
-    try {
-      if (!user) {
-        toast({
-          title: "Authentication Error",
-          description: "You must be logged in to save journal entries. Please sign in.",
-          variant: "destructive",
-        });
-        return;
-      }
-
-      const { data, error } = await supabase.from("journal_entries").insert({
-        user_id: user.id,
-        title: title.trim() || "Untitled Entry",
-        content: content,
-        mood: selectedMood,
-        mood_score: selectedMood ? 7 : undefined,
-        ...(tomorrowsPlan ? { tomorrows_intention: tomorrowsPlan } : {}),
-        created_at: new Date().toISOString(),
-      }).select();
-
-      if (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-
-      setLastSaved(new Date());
-      toast({
-        title: "Entry saved",
-        description: "Your journal entry has been saved successfully.",
-      });
-      
-      // Navigate back to journal page
-      navigate("/patient-dashboard/journal");
-    } catch (error: any) {
-      console.error("Error saving journal entry:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save your journal entry. Please try again.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [editor, title, selectedMood, tomorrowsPlan, navigate, toast, user]);
-
-  // Autosave functionality
-  useEffect(() => {
-    if (!editor) return;
-    
-    const content = editor.getText().trim();
-    if (!content && !title.trim()) return;
-
-    const timeoutId = setTimeout(saveEntry, AUTOSAVE_DELAY);
-    return () => clearTimeout(timeoutId);
-  }, [editor, title, selectedMood, tomorrowsPlan, saveEntry]);
-
-  // Handle manually saving
-  const handleSave = async () => {
-    if (!selectedMood) {
-      setShowMoodReminder(true);
-      toast({
-        title: "Please select a mood",
-        description: "Select a mood before saving your journal entry.",
-        variant: "destructive",
-      });
+    if (!title.trim()) {
+      toast.error('Please enter a title for your journal entry');
       return;
     }
-
-    setIsSaving(true);
+    
+    if (!content.trim()) {
+      toast.error('Please write something in your journal entry');
+      return;
+    }
     
     try {
-      // Get the current date and time
-      const now = new Date().toISOString();
+      setIsSubmitting(true);
       
-      const { error } = await supabase.from("journal_entries").insert({
+      // Create journal entry object
+      const entry = {
         title,
-        content: content,
-        mood: selectedMood as "Happy" | "Calm" | "Sad" | "Angry" | "Worried",
-        user_id: user?.id,
-        created_at: now,
-        updated_at: now,
-        is_encrypted: false,
-      });
-
-      if (error) {
-        console.error("Error saving journal entry:", error);
-        throw error;
-      }
-
-      setLastSaved(new Date());
-      toast({
-        title: "Entry saved",
-        description: "Your journal entry has been saved successfully.",
-      });
+        content,
+        mood,
+        tags,
+        tomorrows_intention: tomorrowsIntention,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
       
-      // Navigate back to journal page
-      navigate("/patient-dashboard/journal");
-    } catch (error: any) {
-      console.error("Error saving journal entry:", error);
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save your journal entry. Please try again.",
-        variant: "destructive",
-      });
+      // In a real app, save to database
+      devLog('Saving journal entry:', entry);
+      
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      toast.success('Journal entry saved successfully');
+      
+      // Redirect to journal page
+      if (isAuthenticated) {
+        navigate('/patient-dashboard/journal');
+      } else {
+        navigate('/journal');
+      }
+    } catch (error) {
+      errorLog('Error saving journal entry:', error);
+      toast.error('Failed to save journal entry. Please try again.');
     } finally {
-      setIsSaving(false);
+      setIsSubmitting(false);
     }
   };
-
-  // Handle cancel
-  const handleCancel = () => {
-    navigate("/patient-dashboard/journal");
+  
+  const handleAddTag = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && tagInput.trim()) {
+      e.preventDefault();
+      
+      // Check if tag already exists
+      if (!tags.includes(tagInput.trim().toLowerCase())) {
+        setTags([...tags, tagInput.trim().toLowerCase()]);
+      }
+      
+      setTagInput('');
+    }
   };
-
-  // Mood selection component
-  const MoodSelector = () => (
-    <div className="flex flex-wrap gap-2 mt-4">
-      <p className="w-full text-sm font-medium mb-1">How are you feeling today?</p>
-      {["Happy", "Grateful", "Calm", "Anxious", "Sad", "Overwhelmed"].map((mood) => (
-        <Button
-          key={mood}
-          type="button"
-          variant={selectedMood === mood ? "default" : "outline"}
-          size="sm"
-          onClick={() => setSelectedMood(mood)}
-          className={selectedMood === mood ? "bg-blue-600" : ""}
-        >
-          {mood}
-        </Button>
-      ))}
-    </div>
-  );
-
+  
+  const handleRemoveTag = (tagToRemove: string) => {
+    setTags(tags.filter(tag => tag !== tagToRemove));
+  };
+  
+  // Function to get mood description
+  const getMoodDescription = (moodValue: number) => {
+    if (moodValue >= 8) return 'Great';
+    if (moodValue >= 6) return 'Good';
+    if (moodValue >= 4) return 'Okay';
+    if (moodValue >= 2) return 'Low';
+    return 'Very Low';
+  };
+  
+  // Function to get mood color based on value
+  const getMoodColor = (moodValue: number) => {
+    if (moodValue >= 8) return 'bg-green-500';
+    if (moodValue >= 6) return 'bg-teal-500';
+    if (moodValue >= 4) return 'bg-yellow-500';
+    if (moodValue >= 2) return 'bg-orange-500';
+    return 'bg-red-500';
+  };
+  
   return (
-    <DashboardLayout>
-      <div className="container max-w-4xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-2xl font-semibold">New Journal Entry</h1>
-          <div className="text-sm text-muted-foreground">
-            {todayDate}
-          </div>
-        </div>
-
-        <Card className="p-6">
-          <div className="mb-4">
-            <input
-              ref={titleInputRef}
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              className="w-full text-xl font-bold bg-transparent border-none outline-none focus:ring-1 focus:ring-blue-200 rounded"
-              placeholder="Title your entry..."
-            />
-          </div>
-
-          <MoodSelector />
-          
-          {showMoodReminder && !selectedMood && (
-            <div className="my-4 p-3 rounded-md bg-amber-50 border border-amber-200 flex items-center gap-2 text-sm text-amber-700">
-              <AlertCircle className="h-4 w-4 flex-shrink-0" />
-              <p>Selecting a mood helps track your emotional patterns over time.</p>
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="mb-6">
+        <Button 
+          variant="ghost" 
+          onClick={handleGoBack}
+          className="mb-4 pl-0 hover:bg-transparent"
+        >
+          <ChevronLeft className="mr-2 h-4 w-4" />
+          Back to Journal
+        </Button>
+        
+        <h1 className="text-3xl font-bold text-gray-900">New Journal Entry</h1>
+        <p className="text-gray-500 mt-1">Express your thoughts and feelings</p>
+      </div>
+      
+      <form onSubmit={handleSubmit}>
+        <Card className="mb-6">
+          <CardContent className="pt-6 space-y-6">
+            <div className="space-y-2">
+              <Label htmlFor="title">Title</Label>
+              <Input 
+                id="title" 
+                placeholder="Give your entry a title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                required
+              />
             </div>
-          )}
-
-          <div className="my-4 border rounded-md">
-            <EditorToolbar editor={editor} />
-            <EditorContent editor={editor} className="min-h-[40vh]" />
-          </div>
-
-          <div className="mt-6">
-            <h3 className="font-medium text-gray-700 mb-2 text-sm">Tomorrow's plan:</h3>
-            <textarea
-              placeholder="What do you plan to accomplish tomorrow?"
-              value={tomorrowsPlan}
-              onChange={(e) => setTomorrowsPlan(e.target.value)}
-              className="w-full border border-gray-200 rounded p-3 focus:outline-none focus:ring-2 focus:ring-blue-100"
-              rows={3}
-            />
-          </div>
-
-          <div className="flex justify-between mt-6">
-            <Button variant="outline" onClick={handleCancel}>
+            
+            <div className="space-y-2">
+              <Label htmlFor="content">Journal Entry</Label>
+              <Textarea 
+                id="content" 
+                placeholder="Write about your day, thoughts, or feelings..."
+                value={content}
+                onChange={(e) => setContent(e.target.value)}
+                className="min-h-[200px]"
+                required
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="mood">
+                How are you feeling today? <span className="text-gray-500 ml-2">{getMoodDescription(mood)} ({mood}/10)</span>
+              </Label>
+              <div className="flex items-center gap-4">
+                <div className="flex-1">
+                  <Slider 
+                    id="mood" 
+                    value={[mood]} 
+                    min={1} 
+                    max={10} 
+                    step={1} 
+                    onValueChange={(values) => setMood(values[0])} 
+                  />
+                </div>
+                <div className={`w-10 h-10 rounded-full ${getMoodColor(mood)} flex items-center justify-center text-white font-medium`}>
+                  {mood}
+                </div>
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="tags">Tags</Label>
+              <div className="flex flex-wrap gap-2 mb-2">
+                {tags.map(tag => (
+                  <Badge key={tag} variant="secondary" className="text-xs flex items-center gap-1 pl-3">
+                    {tag}
+                    <button 
+                      type="button" 
+                      onClick={() => handleRemoveTag(tag)}
+                      className="ml-1 h-4 w-4 rounded-full inline-flex items-center justify-center hover:bg-gray-200"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+              <Input 
+                id="tags" 
+                placeholder="Add tags (press Enter after each tag)"
+                value={tagInput}
+                onChange={(e) => setTagInput(e.target.value)}
+                onKeyDown={handleAddTag}
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="intention">Tomorrow's Intention (Optional)</Label>
+              <Textarea 
+                id="intention" 
+                placeholder="What's one thing you intend to do tomorrow?"
+                value={tomorrowsIntention}
+                onChange={(e) => setTomorrowsIntention(e.target.value)}
+                className="min-h-[80px]"
+              />
+            </div>
+          </CardContent>
+          <CardFooter className="flex justify-end space-x-4 pt-2">
+            <Button 
+              type="button" 
+              variant="outline" 
+              onClick={handleGoBack}
+            >
               Cancel
             </Button>
-            <div className="flex items-center gap-2">
-              {lastSaved && (
-                <span className="text-xs text-gray-500">
-                  Last saved: {lastSaved.toLocaleTimeString()}
-                </span>
-              )}
-              <Button onClick={handleSave} disabled={isSaving}>
-                {isSaving ? "Saving..." : "Save Entry"}
-              </Button>
-            </div>
-          </div>
+            <Button 
+              type="submit" 
+              disabled={isSubmitting}
+              className="flex items-center gap-2"
+            >
+              {isSubmitting ? 'Saving...' : 'Save Entry'}
+              <Save className="h-4 w-4" />
+            </Button>
+          </CardFooter>
         </Card>
-      </div>
-    </DashboardLayout>
+      </form>
+    </div>
   );
 } 

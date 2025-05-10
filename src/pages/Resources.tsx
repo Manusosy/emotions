@@ -524,12 +524,12 @@ const Resources = () => {
       {/* Hero Section */}
       <section className="mb-16">
         <div className="text-center mb-10">
-          <h1 className="text-4xl font-bold text-gray-900 mb-4">Mental Health Resources</h1>
-          <p className="text-xl text-gray-600 max-w-3xl mx-auto">
+        <h1 className="text-4xl font-bold text-gray-900 mb-4">Mental Health Resources</h1>
+        <p className="text-xl text-gray-600 max-w-3xl mx-auto">
             Access a wide range of materials to support your mental wellbeing, from educational content to interactive tools.
-          </p>
-        </div>
-        
+        </p>
+      </div>
+
         <div className="relative mx-auto max-w-2xl">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
           <Input
@@ -546,7 +546,7 @@ const Resources = () => {
       <section className="mb-16">
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Browse by Category</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {categories.map((category) => (
+        {categories.map((category) => (
             <motion.div
               key={category.id}
               className="cursor-pointer"
@@ -556,10 +556,10 @@ const Resources = () => {
             >
               <Card className={`h-full transition-colors ${activeCategory === category.id ? 'border-blue-500 bg-blue-50' : 'hover:border-gray-300'}`}>
                 <CardContent className="p-6">
-                  <div className="flex items-start space-x-4">
+              <div className="flex items-start space-x-4">
                     <div className="p-3 rounded-full bg-blue-100 text-blue-600">
-                      {category.icon}
-                    </div>
+                  {category.icon}
+                </div>
                     <div className="flex-1">
                       <h3 className="font-semibold text-lg mb-2">{category.title}</h3>
                       <p className="text-gray-600 text-sm mb-4">{category.description}</p>
@@ -567,8 +567,8 @@ const Resources = () => {
                         <span>{category.action}</span>
                         <ChevronRight className="h-4 w-4 ml-1" />
                       </div>
-                    </div>
-                  </div>
+                </div>
+              </div>
                 </CardContent>
               </Card>
             </motion.div>
@@ -649,7 +649,7 @@ const Resources = () => {
                         </Badge>
                       ))}
                     </div>
-                  </CardContent>
+            </CardContent>
                   <CardFooter className="p-5 pt-0 flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       {getResourceActionButton(resource)}
@@ -664,16 +664,16 @@ const Resources = () => {
                     </div>
                     <Button variant="ghost" size="icon" className="text-gray-500 hover:text-red-500">
                       <Heart className="h-5 w-5" />
-                    </Button>
-                  </CardFooter>
-                </Card>
+              </Button>
+            </CardFooter>
+          </Card>
               </motion.div>
-            ))}
+        ))}
           </motion.div>
         ) : (
           <div className="text-center py-8 text-gray-500">
             No featured resources available
-          </div>
+      </div>
         )}
       </section>
       
@@ -689,7 +689,7 @@ const Resources = () => {
           <div className="flex items-center">
             <Button variant="ghost" className="text-sm flex items-center" onClick={() => setActiveCategory("all")}>
               <span className={activeCategory === "all" ? "text-blue-600 font-medium" : ""}>All</span>
-            </Button>
+          </Button>
             {categories.map((cat) => (
               <Button 
                 key={cat.id} 
@@ -698,7 +698,7 @@ const Resources = () => {
                 onClick={() => setActiveCategory(cat.id)}
               >
                 <span className={activeCategory === cat.id ? "text-blue-600 font-medium" : ""}>{cat.title}</span>
-              </Button>
+          </Button>
             ))}
           </div>
         </div>
@@ -812,11 +812,11 @@ const Resources = () => {
                 Clear search
               </Button>
             )}
-          </div>
+      </div>
         )}
       </section>
     </div>
   )
-}
+} 
 
 export default Resources

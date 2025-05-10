@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
+import { api } from "@/lib/api";
+import { errorLog, devLog } from "@/utils/environment";
 import MoodAnalytics from "../components/MoodAnalytics";
 import MoodSummaryCard from "../components/MoodSummaryCard";
 import { 
@@ -40,24 +41,25 @@ export default function MoodTrackerPage() {
     
     try {
       setIsSavingNote(true);
+      devLog("Saving journal note for user:", user.id);
       
-      const { error } = await supabase
-        .from('journal_entries')
-        .insert({
-          user_id: user.id,
-          title: `Mood Journal - ${new Date().toLocaleDateString()}`,
-          content: journalNote,
-          mood: "Calm",
-          created_at: new Date().toISOString()
-        });
+      const response = await api.post('/api/journal-entries', {
+        user_id: user.id,
+        title: `Mood Journal - ${new Date().toLocaleDateString()}`,
+        content: journalNote,
+        mood: "Calm",
+        created_at: new Date().toISOString()
+      });
         
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error(`Failed to save journal entry: ${response.statusText}`);
+      }
       
       toast.success("Journal note saved successfully");
       setJournalNote("");
       navigate("/patient-dashboard/journal");
     } catch (error) {
-      console.error('Error saving journal note:', error);
+      errorLog('Error saving journal note:', error);
       toast.error("Failed to save journal note");
     } finally {
       setIsSavingNote(false);
@@ -257,25 +259,23 @@ export default function MoodTrackerPage() {
             <Card>
               <CardHeader>
                 <CardTitle>Mood Journal</CardTitle>
-                <CardDescription>Reflect on your emotional state today</CardDescription>
+                <CardDescription>Express your feelings and thoughts</CardDescription>
               </CardHeader>
               <CardContent>
-                <Textarea
-                  placeholder="How are you feeling today? What factors might be contributing to your mood?"
-                  className="min-h-[200px]"
+                <Textarea 
                   value={journalNote}
                   onChange={(e) => setJournalNote(e.target.value)}
+                  placeholder="Write about how you're feeling today..."
+                  className="min-h-[200px]"
                 />
               </CardContent>
-              <CardFooter className="flex justify-between">
-                <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
-                  View Journal History
-                </Button>
+              <CardFooter className="justify-end">
                 <Button 
-                  onClick={handleSaveJournalNote} 
+                  onClick={handleSaveJournalNote}
                   disabled={isSavingNote || !journalNote.trim()}
                 >
-                  {isSavingNote ? "Saving..." : "Save Entry"}
+                  {isSavingNote ? 'Saving...' : 'Save & Continue'}
+                  <ArrowRight className="h-4 w-4 ml-1" />
                 </Button>
               </CardFooter>
             </Card>

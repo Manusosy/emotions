@@ -12,13 +12,13 @@ export default function NotFound() {
   useEffect(() => {
     // If we're in a dashboard context, keep the user there
     const path = location.pathname;
-    const isDashboardPath = path.includes('/patient-dashboard') || path.includes('/ambassador-dashboard');
+    const isDashboardPath = path.includes('/patient-dashboard') || path.includes('/mood-mentor-dashboard');
     
     if (isDashboardPath) {
       // Extract the dashboard base path
       const dashboardBase = path.includes('/patient-dashboard') 
         ? '/patient-dashboard'
-        : '/ambassador-dashboard';
+        : '/mood-mentor-dashboard';
       
       // Set a timeout to automatically navigate back
       const timer = setTimeout(() => {
@@ -36,12 +36,12 @@ export default function NotFound() {
     
     if (path.includes('/patient-dashboard')) {
       return '/patient-dashboard';
-    } else if (path.includes('/ambassador-dashboard')) {
-      return '/ambassador-dashboard';
+    } else if (path.includes('/mood-mentor-dashboard')) {
+      return '/mood-mentor-dashboard';
     } else if (userRole === 'patient') {
       return '/patient-dashboard';
-    } else if (userRole === 'ambassador') {
-      return '/ambassador-dashboard';
+    } else if (userRole === 'moodMentor') {
+      return '/mood-mentor-dashboard';
     } else {
       return '/';
     }
@@ -65,10 +65,10 @@ export default function NotFound() {
           <Button variant="outline" asChild>
             <Link to={getRedirectPath()}>
               {location.pathname.includes('patient-dashboard') 
-                ? 'Patient Dashboard' 
-                : location.pathname.includes('ambassador-dashboard')
-                  ? 'Ambassador Dashboard'
-                  : 'Home'}
+                ? 'Go to Patient Dashboard' 
+                : location.pathname.includes('mood-mentor-dashboard')
+                  ? 'Go to Mood Mentor Dashboard'
+                  : 'Go Home'}
             </Link>
           </Button>
         </div>

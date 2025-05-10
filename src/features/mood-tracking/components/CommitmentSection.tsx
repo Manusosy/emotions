@@ -1,4 +1,4 @@
-import { Plus, Search, UserRound, CalendarDays, MessageSquare, Brain, Heart, Sparkles, ShieldCheck } from "lucide-react";
+import { Plus, Search, UserRound, CalendarDays, MessageSquare, Brain, Heart, Sparkles, ShieldCheck, Users } from "lucide-react";
 import { motion } from "framer-motion";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -129,9 +129,9 @@ const WhyBookSection = () => {
 
 const featureCards = [
   {
-    title: "Expert Ambassadors",
-    description: "Connect with mental health ambassadors specializing in various mental health areas.",
-    icon: UserRound,
+    title: "Expert Mood Mentors",
+    description: "Connect with mental health mood mentors specializing in various mental health areas.",
+    icon: Users,
   },
   {
     title: "Flexible Sessions",
@@ -231,8 +231,8 @@ const CommitmentSection = () => {
               <span className="text-[#0066FF]">support</span>.
             </h2>
 
-            <p className="text-slate-300 text-lg leading-relaxed">
-              As a trusted mental health platform, we are dedicated to making support accessible and comfortable. Our network of mental health ambassadors provides personalized care through individual sessions, group support, and ongoing guidance.
+            <p className="text-gray-600 text-lg leading-relaxed max-w-3xl mx-auto">
+              Our commitment to your mental well-being goes beyond just providing a platform. We understand that seeking help should feel safe and comfortable. Our network of mental health mood mentors provides personalized care through individual sessions, group support, and ongoing guidance.
             </p>
 
             <Accordion type="single" value={openItem} onValueChange={setOpenItem} collapsible>
@@ -281,14 +281,14 @@ const CommitmentSection = () => {
           {[
             {
               icon: Search,
-              title: "Find Your Ambassador",
-              description: "Search for mental health ambassadors based on specialization, approach, and availability that match your needs.",
+              title: "Find Your Mood Mentor",
+              description: "Search for mental health mood mentors based on specialization, approach, and availability that match your needs.",
               color: '#0066FF'
             },
             {
               icon: UserRound,
-              title: "Review Profiles",
-              description: "Explore detailed ambassador profiles, backgrounds, and specialties to find your ideal match.",
+              title: "Detailed Profiles",
+              description: "Explore detailed mood mentor profiles, backgrounds, and specialties to find your ideal match.",
               color: '#FF4D00'
             },
             {

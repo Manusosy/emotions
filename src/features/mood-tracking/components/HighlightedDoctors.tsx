@@ -3,21 +3,22 @@ import { Star, MapPin, Clock, Globe2, GraduationCap } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { useNavigate } from "react-router-dom";
 import BookingButton from "@/features/booking/components/BookingButton";
-// Import supabase conditionally to handle potential errors better
-let supabaseClient: any;
-let ambassadorService: any;
-try {
-  const { supabase } = require("@/integrations/supabase/client");
-  const { ambassadorService: ambService } = require("@/integrations/supabase/services/ambassador.service");
-  supabaseClient = supabase;
-  ambassadorService = ambService;
-} catch (error) {
-  console.error("Failed to load Supabase client or ambassador service:", error);
-  supabaseClient = null;
-  ambassadorService = null;
+import { moodMentorService } from "@/lib/moodMentorService";
+import { errorLog, devLog } from "@/utils/environment";
+
+// Add a type definition for the expected service response
+interface MentorServiceResponse {
+  success: boolean;
+  data?: MoodMentor[];
+  error?: string;
 }
 
-interface Ambassador {
+// Extend the moodMentorService with the method we're expecting
+interface ExtendedMoodMentorService {
+  getHighlightedMentors?: (limit: number) => Promise<MentorServiceResponse>;
+}
+
+interface MoodMentor {
   id: string;
   full_name: string;
   avatar_url: string;
@@ -32,7 +33,7 @@ interface Ambassador {
 }
 
 // Sample mock data to use as fallback when API calls fail
-const mockAmbassadors: Ambassador[] = [
+const mockMentors: MoodMentor[] = [
   {
     id: "mock-1",
     full_name: "Dr. Sarah Johnson",
@@ -74,218 +75,104 @@ const mockAmbassadors: Ambassador[] = [
   }
 ];
 
-export default function AmbassadorsGrid() {
+export default function HighlightedDoctors() {
   const navigate = useNavigate();
-  const [ambassadors, setAmbassadors] = useState<Ambassador[]>(mockAmbassadors);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [mentors, setMentors] = useState<MoodMentor[]>(mockMentors);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Set a timeout to ensure page doesn't appear to hang when loading
-    const timeoutId = setTimeout(() => {
-      setIsLoading(false);
-    }, 2000);
-    
-    fetchAmbassadors();
-    
-    return () => clearTimeout(timeoutId);
+    const fetchMentors = async () => {
+      try {
+        // Check if the service has the required method using type casting
+        const extendedService = moodMentorService as unknown as ExtendedMoodMentorService;
+        if (extendedService && typeof extendedService.getHighlightedMentors === 'function') {
+          const result = await extendedService.getHighlightedMentors(3);
+          if (result.success && result.data) {
+            setMentors(result.data);
+          }
+        } else {
+          devLog("getHighlightedMentors method not available, using mock data");
+        }
+      } catch (error) {
+        errorLog("Error fetching highlighted mentors:", error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchMentors();
   }, []);
 
-  const fetchAmbassadors = async () => {
-    // If ambassador service failed to load, use mock data
-    if (!ambassadorService) {
-      console.log("Using mock data due to ambassador service unavailability");
-      setAmbassadors(mockAmbassadors);
-      setIsLoading(false);
-      return;
-    }
-    
-    try {
-      // Wrap in setTimeout to prevent blocking the UI
-      setTimeout(async () => {
-        try {
-          // Use ambassador service to get available ambassadors with 80% profile completeness
-          const result = await ambassadorService.getAvailableAmbassadors(10);
-          
-          if (result.success && result.data && result.data.length > 0) {
-            // Map to the expected Ambassador interface format
-            const mappedAmbassadors = result.data.map(ambassador => ({
-              id: ambassador.id,
-              full_name: ambassador.name || 'Ambassador',
-              avatar_url: ambassador.avatar || '/default-avatar.png',
-              specialties: ambassador.specialty ? 
-                (typeof ambassador.specialty === 'string' ? ambassador.specialty.split(',') : [ambassador.specialty]) : 
-                ['Mental Health Support'],
-              location: ambassador.location || 'Remote',
-              duration: ambassador.session_duration || '30 Min',
-              rating: ambassador.rating || 4.7,
-              available: ambassador.available !== false, // Default to available if not specified
-              languages: ambassador.languages && Array.isArray(ambassador.languages) ? 
-                ambassador.languages : ['English'],
-              education: (typeof ambassador.education === 'string') ? 
-                ambassador.education : 
-                (ambassador.education && ambassador.education[0]?.degree) || 'Mental Health Professional',
-              experience: (typeof ambassador.experience === 'string') ? 
-                ambassador.experience : 
-                `${ambassador.experience || 3}+ years`
-            }));
-            
-            setAmbassadors(mappedAmbassadors);
-          } else {
-            // Fallback to mock data if no real data available
-            console.log("No ambassador data returned, using mock data");
-            setAmbassadors(mockAmbassadors);
-          }
-        } catch (error: any) {
-          console.error("Failed to fetch ambassadors:", error);
-          // Silently fallback to mock data
-          setAmbassadors(mockAmbassadors);
-        } finally {
-          setIsLoading(false);
-        }
-      }, 500);
-    } catch (error: any) {
-      console.error("Error in fetching ambassadors:", error);
-      setIsLoading(false);
-    }
-  };
-
-  const viewAmbassadorProfile = (ambassadorId: string, ambassadorName: string) => {
-    // Create a URL-friendly version of the name
-    const nameSlug = ambassadorName.toLowerCase().replace(/ /g, '-');
-    // Navigate to the ambassador profile with the name-based URL and ID as a query parameter
-    navigate(`/ambassadors/${nameSlug}?id=${ambassadorId}`);
-  };
-
-  // Show loading state
-  if (isLoading) {
-    return (
-      <div className="container mx-auto px-4 py-8">
-        <div className="flex flex-col items-center mb-8">
-          <div className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-full mb-4">
-            <span className="w-2 h-2 bg-white rounded-full mr-2"></span>
-            <span className="font-medium text-sm">Meet Our Team</span>
-            <span className="w-2 h-2 bg-white rounded-full ml-2"></span>
-          </div>
-          <h2 className="text-3xl md:text-4xl font-bold text-[#001A41]">Our Ambassadors</h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {[1, 2, 3].map((n) => (
-            <Card key={n} className="overflow-hidden animate-pulse">
-              <div className="flex flex-col gap-4 p-6">
-                <div className="flex items-center gap-4">
-                  <div className="w-16 h-16 rounded-full bg-gray-200"></div>
-                  <div className="space-y-2">
-                    <div className="h-4 bg-gray-200 rounded w-32"></div>
-                    <div className="h-3 bg-gray-200 rounded w-20"></div>
-                  </div>
-                </div>
-                <div className="h-3 bg-gray-200 rounded w-full"></div>
-                <div className="h-3 bg-gray-200 rounded w-3/4"></div>
-                <div className="h-8 bg-gray-200 rounded w-full mt-4"></div>
-              </div>
-            </Card>
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const displayedMentors = mentors.length > 0 ? mentors : mockMentors;
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="flex flex-col items-center mb-8">
-        <div className="inline-flex items-center px-4 py-2 bg-blue-500 text-white rounded-full mb-4">
-          <span className="w-2 h-2 bg-white rounded-full mr-2"></span>
-          <span className="font-medium text-sm">Meet Our Team</span>
-          <span className="w-2 h-2 bg-white rounded-full ml-2"></span>
-        </div>
-        <h2 className="text-3xl md:text-4xl font-bold text-[#001A41]">Our Ambassadors</h2>
-      </div>
-      
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-        {ambassadors.map((ambassador) => (
-          <Card key={ambassador.id} className="overflow-hidden hover:shadow-lg transition-shadow">
-            <div className="flex flex-col gap-4 p-6">
-              <div className="flex items-center gap-4 cursor-pointer" onClick={() => viewAmbassadorProfile(ambassador.id, ambassador.full_name)}>
-                <img
-                  src={ambassador.avatar_url || '/default-avatar.png'}
-                  alt={ambassador.full_name}
-                  className="w-16 h-16 rounded-full object-cover"
-                  onError={(e) => {
-                    // Fallback image if the avatar URL fails to load
-                    (e.target as HTMLImageElement).src = '/default-avatar.png';
-                  }}
-                />
-                <div>
-                  <h3 className="font-semibold text-lg">{ambassador.full_name}</h3>
-                  <div className="flex items-center gap-1">
-                    <Star className="w-4 h-4 text-yellow-400 fill-yellow-400" />
-                    <span className="text-sm font-medium">{ambassador.rating || 5.0}</span>
-                  </div>
-                </div>
+    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+      {displayedMentors.map((mentor) => (
+        <Card key={mentor.id} className="p-6 bg-white rounded-xl shadow-sm hover:shadow-md transition-shadow">
+          <div className="flex items-start space-x-4">
+            <img
+              src={mentor.avatar_url}
+              alt={mentor.full_name}
+              className="w-20 h-20 rounded-full object-cover"
+            />
+            <div className="flex-1">
+              <h3 className="font-semibold text-lg text-gray-900">{mentor.full_name}</h3>
+              <div className="flex items-center mt-1">
+                <Star className="w-4 h-4 text-amber-400 fill-current" />
+                <span className="ml-1 text-sm text-gray-600">{mentor.rating}</span>
               </div>
-
-              {ambassador.location && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">{ambassador.location}</span>
-                </div>
-              )}
-
-              {ambassador.specialties && ambassador.specialties.length > 0 && (
-                <div className="flex flex-wrap gap-2">
-                  {ambassador.specialties.map((specialty, index) => (
-                    <span 
-                      key={index}
-                      className="px-2 py-1 text-xs bg-blue-100 text-blue-800 rounded-full"
-                    >
-                      {specialty}
-                    </span>
-                  ))}
-                </div>
-              )}
-
-              {ambassador.languages && ambassador.languages.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <Globe2 className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">
-                    {ambassador.languages.join(", ")}
-                  </span>
-                </div>
-              )}
-
-              {ambassador.education && (
-                <div className="flex items-center gap-2">
-                  <GraduationCap className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">{ambassador.education}</span>
-                </div>
-              )}
-
-              <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-gray-500" />
-                  <span className="text-sm text-gray-600">{ambassador.duration || '30 Min'}</span>
-                </div>
-                <span className={`px-2 py-1 rounded text-xs ${
-                  ambassador.available 
-                    ? 'bg-green-100 text-green-800' 
-                    : 'bg-red-100 text-red-800'
-                }`}>
-                  {ambassador.available ? 'Available' : 'Unavailable'}
-                </span>
-              </div>
-
-              <BookingButton
-                ambassadorId={parseInt(ambassador.id) || 0}
-                className="w-full mt-2"
-                buttonText={ambassador.available ? "Book Session" : "Unavailable"}
-                disabled={!ambassador.available}
-                variant="default"
-              />
             </div>
-          </Card>
-        ))}
-      </div>
+          </div>
+
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center text-gray-600">
+              <MapPin className="w-4 h-4 mr-2" />
+              <span className="text-sm">{mentor.location}</span>
+            </div>
+            <div className="flex items-center text-gray-600">
+              <Clock className="w-4 h-4 mr-2" />
+              <span className="text-sm">{mentor.duration}</span>
+            </div>
+            <div className="flex items-center text-gray-600">
+              <Globe2 className="w-4 h-4 mr-2" />
+              <span className="text-sm">{mentor.languages.join(", ")}</span>
+            </div>
+            <div className="flex items-center text-gray-600">
+              <GraduationCap className="w-4 h-4 mr-2" />
+              <span className="text-sm">{mentor.education}</span>
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <div className="flex flex-wrap gap-2">
+              {mentor.specialties.slice(0, 3).map((specialty, index) => (
+                <span
+                  key={index}
+                  className="px-2 py-1 bg-blue-50 text-blue-600 rounded-full text-xs"
+                >
+                  {specialty}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-2">
+            <button
+              onClick={() => navigate(`/mood-mentors/${mentor.id}`)}
+              className="w-full px-4 py-2 text-sm font-medium text-[#00D2FF] border border-[#00D2FF] rounded-md hover:bg-[#00D2FF] hover:text-white transition-colors"
+            >
+              View Profile
+            </button>
+            <BookingButton
+              mentorId={mentor.id}
+              mentorName={mentor.full_name}
+              buttonText="Book Appointment"
+              className="w-full"
+              variant="default"
+            />
+          </div>
+        </Card>
+      ))}
     </div>
   );
 }

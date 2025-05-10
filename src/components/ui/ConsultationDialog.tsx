@@ -9,8 +9,8 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { UserCircle } from "lucide-react";
+import { api } from "@/lib/api";
 
 interface Ambassador {
   id: string;
@@ -53,31 +53,24 @@ const ConsultationDialog = ({ trigger }: ConsultationDialogProps) => {
   useEffect(() => {
     const fetchAmbassadors = async () => {
       try {
-        if (!supabase) {
-          setIsLoading(false);
-          return;
+        const response = await api.get("/api/ambassadors");
+        if (!response.ok) {
+          throw new Error("Failed to fetch ambassadors");
         }
-
-        const { data, error } = await supabase
-          .from("ambassadors")
-          .select("id, name, specialties, profile_image")
-          .limit(6);
-
-        if (error) {
-          console.error("Error fetching ambassadors:", error);
-          return;
-        }
-
+        
+        const data = await response.json();
         const mappedData = data.map((item: any) => ({
           id: item.id,
           name: item.name,
           specialties: item.specialties || [],
-          profileImage: item.profile_image,
+          profileImage: item.profileImage,
         }));
 
         setAmbassadors(mappedData);
       } catch (error) {
         console.error("Error:", error);
+        // Use mock data as fallback
+        setAmbassadors(mockAmbassadors);
       } finally {
         setIsLoading(false);
       }

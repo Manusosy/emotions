@@ -2,8 +2,9 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { format, formatDistanceToNow } from "date-fns";
 import { Bell } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
+import { api } from "@/lib/api";
+import { errorLog } from "@/utils/environment";
 import {
   Popover,
   PopoverContent,
@@ -46,28 +47,24 @@ export default function NotificationDropdown() {
       setLoading(true);
       setError(null);
       
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false })
-        .limit(5);
+      const response = await api.get(`/api/notifications?limit=5`);
       
-      if (error) throw error;
+      if (!response.ok) {
+        throw new Error('Failed to fetch notifications');
+      }
+      
+      const data = await response.json();
 
-      // Map database notifications to our interface and check localStorage for read status
-      const mappedNotifications: Notification[] = (data || []).map(item => {
-        // Check both database and localStorage for read status
-        const isReadInLocalStorage = localStorage.getItem(`notification_${item.id}_read`) === 'true';
-        
+      // Map API response to our notification interface
+      const mappedNotifications: Notification[] = (data || []).map((item: any) => {
         return {
           id: item.id,
           title: item.title,
           content: item.message || '',
           created_at: item.created_at,
-          read: isReadInLocalStorage || item.read,
-          type: ((item as any).type as 'welcome' | 'update' | 'reminder' | 'other') || 'other',
-          action_url: (item as any).action_url,
+          read: item.read,
+          type: (item.type as 'welcome' | 'update' | 'reminder' | 'other') || 'other',
+          action_url: item.action_url,
           user_id: item.user_id
         };
       });
@@ -75,7 +72,7 @@ export default function NotificationDropdown() {
       setNotifications(mappedNotifications);
       setUnreadCount(mappedNotifications.filter(n => !n.read).length);
     } catch (error) {
-      console.error('Error fetching notifications:', error);
+      errorLog('Error fetching notifications:', error);
       setError('Failed to load notifications');
     } finally {
       setLoading(false);
@@ -90,24 +87,19 @@ export default function NotificationDropdown() {
       );
       setNotifications(updatedNotifications);
       
-      // Update localStorage immediately
-      localStorage.setItem(`notification_${id}_read`, 'true');
-      
       // Calculate new unread count
       const newUnreadCount = updatedNotifications.filter((n) => !n.read).length;
       setUnreadCount(newUnreadCount);
 
       // Update in database
-      await supabase
-        .from('notifications')
-        .update({ 
-          read: true,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
+      const response = await api.put(`/api/notifications/${id}/read`, { read: true });
+      
+      if (!response.ok) {
+        throw new Error('Failed to mark notification as read');
+      }
     } catch (error) {
-      console.error('Error marking notification as read:', error);
-      // Keep the UI state as updated even if the database update fails
+      errorLog('Error marking notification as read:', error);
+      // Keep the UI state as updated even if the API update fails
     }
   };
 
@@ -118,30 +110,20 @@ export default function NotificationDropdown() {
       
       if (unreadIds.length === 0) return;
       
-      // Update localStorage immediately for all notifications
-      unreadIds.forEach(id => {
-        localStorage.setItem(`notification_${id}_read`, 'true');
-      });
-      
       // Update local state immediately
       const updatedNotifications = notifications.map(n => ({ ...n, read: true }));
       setNotifications(updatedNotifications);
       setUnreadCount(0);
 
       // Update all notifications in database
-      if (user?.id) {
-        await supabase
-          .from('notifications')
-          .update({ 
-            read: true,
-            updated_at: new Date().toISOString()
-          })
-          .eq('user_id', user.id)
-          .in('id', unreadIds);
+      const response = await api.put('/api/notifications/mark-all-read', { ids: unreadIds });
+      
+      if (!response.ok) {
+        throw new Error('Failed to mark all notifications as read');
       }
     } catch (error) {
-      console.error('Error marking all notifications as read:', error);
-      // Keep the UI state as updated even if the database update fails
+      errorLog('Error marking all notifications as read:', error);
+      // Keep the UI state as updated even if the API update fails
     }
   };
 

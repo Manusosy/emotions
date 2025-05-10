@@ -1,323 +1,418 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { createContext, useContext, useState, useEffect, ReactNode, useCallback, useRef } from 'react';
+import { authService } from '@/lib/auth.service';
+import { UserRole } from '@/types/database.types';
 import { toast } from 'sonner';
-import { authService } from '@/integrations/supabase/services/auth.service';
-import { userService } from '@/integrations/supabase/services/user.service';
+import { errorLog, devLog } from '@/utils/environment';
 
-export type UserRole = 'patient' | 'ambassador' | 'admin';
+// Session refresh interval (15 minutes)
+const SESSION_REFRESH_INTERVAL = 15 * 60 * 1000;
 
-export const useAuth = () => {
-  const [user, setUser] = useState<any>(null);
+// Buffer time before token expiry to trigger refresh (2 minutes)
+const REFRESH_BUFFER_TIME = 2 * 60 * 1000;
+
+// How long to wait after a failed refresh before trying again (30 seconds)
+const RETRY_INTERVAL = 30 * 1000;
+
+interface User {
+  id: string;
+  email: string;
+  role: UserRole;
+  full_name: string;
+  avatar_url?: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  isAuthenticated: boolean;
+  userRole: UserRole | null;
+  isLoading: boolean;
+  signin: (email: string, password: string, role?: UserRole) => Promise<boolean>;
+  signout: () => Promise<void>;
+  signup: (userData: any, role: UserRole) => Promise<boolean>;
+  resetPassword: (email: string) => Promise<boolean>;
+  updateProfile: (userData: any) => Promise<boolean>;
+  getDashboardUrlForRole: (role: UserRole | null) => string;
+  refreshUserSession: () => Promise<boolean>;
+  redirectToDashboard: () => void;
+  getFullName: () => string;
+}
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [userRole, setUserRole] = useState<UserRole | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isAuthenticating, setIsAuthenticating] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [sessionExpiry, setSessionExpiry] = useState<Date | null>(null);
   
-  // Use refs to track mounted state and prevent memory leaks
-  const isMountedRef = useRef(true);
-  const authInitializedRef = useRef(false);
+  // Use refs to track timers so they can be cleared properly
+  const refreshTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const retryTimerRef = useRef<NodeJS.Timeout | null>(null);
   
-  // Memoize the getDashboardUrlForRole function to prevent unnecessary rerenders
+  // Track if a refresh is in progress to avoid multiple simultaneous refreshes
+  const isRefreshingRef = useRef(false);
+
+  // Helper function to get the dashboard URL for a role
   const getDashboardUrlForRole = useCallback((role: UserRole | null): string => {
-    if (!role) return '/';
-    
     switch (role) {
-      case 'ambassador':
-        return '/ambassador-dashboard';
       case 'patient':
         return '/patient-dashboard';
+      case 'mood_mentor':
+        return '/mood-mentor-dashboard';
       case 'admin':
         return '/admin-dashboard';
       default:
         return '/';
     }
   }, []);
-  
-  const getDashboardUrl = useCallback(() => {
-    return getDashboardUrlForRole(userRole);
-  }, [getDashboardUrlForRole, userRole]);
-  
-  // This function handles auth state updates in a consistent way
-  const updateAuthState = useCallback((session: any) => {
-    if (!isMountedRef.current) return;
-    
-    if (session?.user) {
-      setUser(session.user);
-      setIsAuthenticated(true);
-      
-      // Get role from metadata with fallback to patient
-      const role = session.user.user_metadata?.role || 'patient';
-      setUserRole(role as UserRole);
-      console.log(`Auth state updated: User authenticated as ${role}`);
-      
-      // Store authentication in localStorage to persist through refreshes
-      localStorage.setItem('auth_state', JSON.stringify({
-        isAuthenticated: true,
-        userRole: role,
-        userId: session.user.id
-      }));
-      
-      // Only auto-redirect if on login/signup pages
-      if (window.location.pathname === '/login' || window.location.pathname === '/signup') {
-        // Auto-redirect to dashboard when authenticated
-        const dashboardUrl = getDashboardUrlForRole(role as UserRole);
-        console.log(`Auto redirecting to dashboard: ${dashboardUrl}`);
-        
-        // Use window.location for a complete refresh to ensure auth state is recognized
-        window.location.href = dashboardUrl;
-      }
-    } else {
-      setUser(null);
-      setIsAuthenticated(false);
-      setUserRole(null);
-      console.log("Auth state updated: User not authenticated");
-      
-      // Clear stored authentication state
-      localStorage.removeItem('auth_state');
-    }
-    
-    // Always set loading to false after processing auth state
-    setIsLoading(false);
-  }, [getDashboardUrlForRole]);
-  
-  // Add this new effect to check localStorage on mount
-  useEffect(() => {
-    // Check if we have stored auth state in localStorage
-    const storedAuthState = localStorage.getItem('auth_state');
-    if (storedAuthState) {
-      try {
-        const { isAuthenticated: storedAuth, userRole: storedRole } = JSON.parse(storedAuthState);
-        
-        // If we're on the login or signup page and have stored auth, redirect to dashboard
-        if (storedAuth && storedRole && (window.location.pathname === '/login' || window.location.pathname === '/signup')) {
-          console.log("Found stored auth state, redirecting to dashboard");
-          const dashboardUrl = getDashboardUrlForRole(storedRole as UserRole);
-          window.location.href = dashboardUrl;
-        }
-      } catch (e) {
-        console.error("Error parsing stored auth state:", e);
-        localStorage.removeItem('auth_state');
-      }
-    }
-  }, [getDashboardUrlForRole]);
-  
-  useEffect(() => {
-    console.log("Setting up auth state management");
-    isMountedRef.current = true;
-    
-    const setupAuth = async () => {
-      try {
-        console.log('Setting up auth listeners...');
-        
-        // Subscribe to auth state changes
-        const { data: authListenerData } = authService.onAuthStateChange(
-          (event, session) => {
-            console.log('Auth state changed:', event);
-            
-            // Check for mount before updating state
-            if (!isMountedRef.current) return;
-            
-            // Handle session updates
-            updateAuthState(session);
-            
-            // Special handling for sign in
-            if (event === 'SIGNED_IN' && isMountedRef.current) {
-              console.log('User signed in successfully');
-              // Remove the timeout - update state immediately
-              if (isMountedRef.current) {
-                setIsAuthenticating(false);
-              }
-            }
-          }
-        );
-        
-        // Then check for existing session
-        const { data, error } = await authService.getSession();
-        
-        if (error) {
-          console.error('Error checking session:', error);
-          throw error;
-        }
-        
-        // Initial auth state update
-        updateAuthState(data.session);
-        authInitializedRef.current = true;
-        
-        return () => {
-          // Properly unsubscribe from auth listener
-          if (authListenerData?.subscription?.unsubscribe) {
-            authListenerData.subscription.unsubscribe();
-          }
-        };
-      } catch (error) {
-        console.error('Error in auth setup:', error);
-        if (isMountedRef.current) {
-          setIsLoading(false);
-        }
-      }
-    };
-    
-    setupAuth();
-    
-    // Cleanup function
-    return () => {
-      isMountedRef.current = false;
-    };
-  }, [updateAuthState]);
 
-  const login = async (email: string, password: string) => {
-    if (isAuthenticating) return null;
+  // Clear all timers
+  const clearTimers = useCallback(() => {
+    if (refreshTimerRef.current) {
+      clearTimeout(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
     
-    console.log("Login function called");
-    setIsAuthenticating(true);
+    if (retryTimerRef.current) {
+      clearTimeout(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+  }, []);
+
+  // Refresh user session
+  const refreshUserSession = useCallback(async (): Promise<boolean> => {
+    // Prevent multiple simultaneous refresh requests
+    if (isRefreshingRef.current) {
+      return false;
+    }
     
     try {
-      const { data, error } = await authService.signIn({
-        email,
-        password
-      });
+      isRefreshingRef.current = true;
+      devLog('Refreshing user session...');
       
-      if (error) throw error;
+      const { success, data, error } = await authService.refreshToken();
       
-      toast.success("Signed in successfully!");
-      return data;
-    } catch (error: any) {
-      console.error('Login error:', error);
-      toast.error('Failed to sign in: ' + (error.message || 'Invalid credentials'));
-      throw error;
-    } finally {
-      if (isMountedRef.current) {
-        setIsAuthenticating(false);
-      }
-    }
-  };
-
-  const signup = async (signupData: {
-    email: string,
-    password: string,
-    firstName: string,
-    lastName: string,
-    role: UserRole,
-    country: string,
-    gender?: string | null,
-  }) => {
-    if (isAuthenticating) return { data: null, error: new Error("Authentication already in progress") };
-    
-    console.log("Signup function called", signupData.email);
-    setIsAuthenticating(true);
-    
-    try {
-      // Step 1: Sign up the user
-      const response = await authService.signUp({
-        email: signupData.email,
-        password: signupData.password,
-        firstName: signupData.firstName,
-        lastName: signupData.lastName,
-        role: signupData.role,
-        country: signupData.country,
-        gender: signupData.gender
-      });
-      
-      if (response.error) {
-        console.error('Signup response error:', response.error);
-        return { data: null, error: response.error };
+      if (!success || error) {
+        errorLog('Session refresh failed:', error);
+        return false;
       }
       
-      const { data } = response;
-      
-      if (!data.user) {
-        console.error('Signup returned no user data');
-        return { data: null, error: new Error("No user data returned") };
-      }
-      
-      // Step 2: Sign in immediately after signup to get a session
-      console.log('Automatically signing in after signup');
-      const signInResponse = await authService.signIn({
-        email: signupData.email,
-        password: signupData.password
-      });
-      
-      if (signInResponse.error) {
-        console.error('Auto sign-in after signup failed:', signInResponse.error);
-        // Even if sign-in fails, signup succeeded
-        return { data, error: null };
-      }
-      
-      // Manually set auth state to skip any potential delays
-      if (signInResponse.data?.session) {
-        setUser(signInResponse.data.user);
+      if (data?.user) {
+        setUser(data.user);
+        setUserRole(data.user.role);
         setIsAuthenticated(true);
-        setUserRole(signupData.role);
+        
+        // Update session expiry if provided
+        if (data.expiresAt) {
+          const expiryDate = new Date(data.expiresAt);
+          setSessionExpiry(expiryDate);
+          scheduleTokenRefresh(expiryDate);
+        }
+        
+        return true;
       }
       
-      // Successfully signed up and signed in
-      console.log('Auto sign-in after signup successful');
-      toast.success("Account created successfully!");
-      
-      // Return the sign-in response data which contains the latest session
-      return { data: signInResponse.data, error: null };
-    } catch (error: any) {
-      console.error('Signup error:', error);
-      return { data: null, error };
+      return false;
+    } catch (error) {
+      errorLog('Error refreshing session:', error);
+      return false;
     } finally {
-      if (isMountedRef.current) {
-        setIsAuthenticating(false);
-      }
+      isRefreshingRef.current = false;
     }
-  };
+  }, []);
 
-  const signout = async () => {
-    if (isAuthenticating) return;
+  // Schedule a token refresh based on expiry time
+  const scheduleTokenRefresh = useCallback((expiryDate: Date) => {
+    clearTimers();
     
-    console.log("Signout function called");
-    setIsAuthenticating(true);
+    const now = new Date();
+    const timeUntilRefresh = Math.max(
+      0,
+      expiryDate.getTime() - now.getTime() - REFRESH_BUFFER_TIME
+    );
     
+    devLog(`Scheduling token refresh in ${timeUntilRefresh / 1000} seconds`);
+    
+    refreshTimerRef.current = setTimeout(() => {
+      refreshUserSession().catch(error => {
+        errorLog('Failed to refresh token:', error);
+        
+        // Schedule a retry
+        retryTimerRef.current = setTimeout(() => {
+          refreshUserSession().catch(error => {
+            errorLog('Retry refresh failed:', error);
+            // After a failed retry, we'll set authenticated to false
+            setIsAuthenticated(false);
+            setUser(null);
+            setUserRole(null);
+            toast.error('Your session has expired. Please sign in again.');
+          });
+        }, RETRY_INTERVAL);
+      });
+    }, timeUntilRefresh);
+  }, [clearTimers, refreshUserSession]);
+
+  // Initialize auth state from the server
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        setIsLoading(true);
+        const { success, data } = await authService.getSession();
+        
+        if (success && data?.user) {
+          setUser(data.user);
+          setUserRole(data.user.role);
+          setIsAuthenticated(true);
+          
+          // Set session expiry if available
+          if (data.expiresAt) {
+            const expiryDate = new Date(data.expiresAt);
+            setSessionExpiry(expiryDate);
+            scheduleTokenRefresh(expiryDate);
+          } else {
+            // If no expiry is provided, use the default refresh interval
+            const defaultExpiry = new Date();
+            defaultExpiry.setTime(defaultExpiry.getTime() + SESSION_REFRESH_INTERVAL);
+            setSessionExpiry(defaultExpiry);
+            scheduleTokenRefresh(defaultExpiry);
+          }
+        } else {
+          // Clear state if no valid session
+          setUser(null);
+          setUserRole(null);
+          setIsAuthenticated(false);
+        }
+      } catch (error) {
+        errorLog('Error initializing auth:', error);
+        // Clear auth state on error
+        setUser(null);
+        setUserRole(null);
+        setIsAuthenticated(false);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    initializeAuth();
+    
+    // Clean up timers on unmount
+    return () => {
+      clearTimers();
+    };
+  }, [clearTimers, scheduleTokenRefresh]);
+
+  // Listen for API response errors to detect auth issues
+  useEffect(() => {
+    const handleApiError = async (event: CustomEvent<any>) => {
+      const { status, url } = event.detail;
+      
+      // Handle 401 Unauthorized errors 
+      if (status === 401 && isAuthenticated && !url.includes('/api/auth/refresh')) {
+        // Try to refresh the token
+        const refreshed = await refreshUserSession();
+        
+        // Clear any redirect timeout that might have been set by the API client
+        if ((window as any).__authRedirectTimeout) {
+          clearTimeout((window as any).__authRedirectTimeout);
+          (window as any).__authRedirectTimeout = null;
+        }
+        
+        if (!refreshed) {
+          // If refresh fails, sign out
+          await signout();
+          toast.error('Your session has expired. Please sign in again.');
+        }
+      }
+    };
+    
+    // Register custom event listener
+    window.addEventListener('api-error' as any, handleApiError as EventListener);
+    
+    return () => {
+      window.removeEventListener('api-error' as any, handleApiError as EventListener);
+    };
+  }, [isAuthenticated, refreshUserSession]);
+
+  const signin = async (email: string, password: string, role?: UserRole): Promise<boolean> => {
     try {
-      // First clear local storage to ensure we don't get stuck in authentication
-      localStorage.removeItem('auth_state');
+      setIsLoading(true);
+      const { success, data, error } = await authService.signIn(email, password, role);
       
-      // Manually reset auth state before API call to prevent UI flashes
-      setUser(null);
-      setIsAuthenticated(false);
-      setUserRole(null);
-      
-      // Then perform API signout
-      const { error } = await authService.signOut();
-      if (error) {
-        console.error("Error during sign out:", error.message);
-        // Even with error, we've already cleared local state, so user is effectively signed out
-        console.log("Auth state and local storage cleared despite API error");
+      if (!success || error) {
+        toast.error(error?.message || 'Failed to sign in');
+        return false;
       }
-      
-      // Force a redirect to home page
-      console.log("Redirecting to home page after signout");
-      setTimeout(() => window.location.href = '/', 100);
-      
-      return;
-    } catch (error: any) {
-      console.error('Signout error:', error);
-      toast.error('Failed to sign out: ' + (error.message || 'Unknown error'));
-      
-      // Even if there's an error, ensure user is signed out locally
-      localStorage.removeItem('auth_state');
-      setUser(null);
-      setIsAuthenticated(false);
-      setUserRole(null);
-      
-      // Force a redirect to home page
-      setTimeout(() => window.location.href = '/', 100);
+
+      if (data?.user) {
+        setUser(data.user);
+        setUserRole(data.user.role);
+        setIsAuthenticated(true);
+        
+        // Set session expiry if available
+        if (data.expiresAt) {
+          const expiryDate = new Date(data.expiresAt);
+          setSessionExpiry(expiryDate);
+          scheduleTokenRefresh(expiryDate);
+        } else {
+          // If no expiry is provided, use the default refresh interval
+          const defaultExpiry = new Date();
+          defaultExpiry.setTime(defaultExpiry.getTime() + SESSION_REFRESH_INTERVAL);
+          setSessionExpiry(defaultExpiry);
+          scheduleTokenRefresh(defaultExpiry);
+        }
+        
+        toast.success('Successfully signed in');
+        return true;
+      }
+
+      return false;
+    } catch (error) {
+      errorLog('Error in signin:', error);
+      toast.error('Something went wrong during sign in');
+      return false;
     } finally {
-      if (isMountedRef.current) {
-        setIsAuthenticating(false);
-      }
+      setIsLoading(false);
     }
   };
 
-  const getFullName = useCallback(() => {
-    if (!user) return '';
-    return user.user_metadata?.full_name || 
-           `${user.user_metadata?.first_name || ''} ${user.user_metadata?.last_name || ''}`.trim() || 
-           'User';
-  }, [user]);
+  const signup = async (userData: any, role: UserRole): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      console.log('Signing up user with data:', { ...userData, password: '[REDACTED]' });
+      console.log('Using role:', role);
+      
+      const { success, data, error } = await authService.signUp(
+        userData.email,
+        userData.password,
+        role,
+        userData
+      );
+
+      if (!success || error) {
+        console.error('Signup failed:', error);
+        toast.error(error?.message || 'Failed to sign up');
+        return false;
+      }
+
+      // Check if we have user and session data from the API response
+      if (data?.user) {
+        // Set user data in the context
+        setUser(data.user);
+        setUserRole(data.user.role);
+        setIsAuthenticated(true);
+        
+        // If we have session data with expiry, set up session refresh
+        if (data.session?.expiresAt) {
+          const expiryDate = new Date(data.session.expiresAt);
+          setSessionExpiry(expiryDate);
+          scheduleTokenRefresh(expiryDate);
+        } else {
+          // If no expiry is provided, use the default refresh interval
+          const defaultExpiry = new Date();
+          defaultExpiry.setTime(defaultExpiry.getTime() + SESSION_REFRESH_INTERVAL);
+          setSessionExpiry(defaultExpiry);
+          scheduleTokenRefresh(defaultExpiry);
+        }
+        
+        toast.success('Account created successfully!');
+        
+        // Redirect to the dashboard
+        setTimeout(() => {
+          const dashboardUrl = getDashboardUrlForRole(role);
+          console.log(`Signup successful, redirecting to: ${dashboardUrl}`);
+          
+          // Use direct window.location navigation to avoid routing issues
+          window.location.href = dashboardUrl.startsWith('/') ? dashboardUrl : `/${dashboardUrl}`;
+        }, 500); // Short delay to allow the toast to show
+        
+        return true;
+      }
+
+      toast.success('Account created successfully! Please sign in.');
+      return true;
+    } catch (error) {
+      errorLog('Error in signup:', error);
+      console.error('Detailed signup error:', error);
+      toast.error('Something went wrong during sign up');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const signout = async (): Promise<void> => {
+    try {
+      setIsLoading(true);
+      // Clear all timers to prevent further refresh attempts
+      clearTimers();
+      
+      const { success, error } = await authService.signOut();
+      
+      if (!success || error) {
+        toast.error(error?.message || 'Failed to sign out');
+        return;
+      }
+
+      // Clear auth state
+      setUser(null);
+      setUserRole(null);
+      setIsAuthenticated(false);
+      setSessionExpiry(null);
+      toast.success('Successfully signed out');
+    } catch (error) {
+      errorLog('Error in signout:', error);
+      toast.error('Something went wrong during sign out');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const resetPassword = async (email: string): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      const { success, error } = await authService.resetPassword(email);
+      
+      if (!success || error) {
+        toast.error(error?.message || 'Failed to send reset password email');
+        return false;
+      }
+
+      toast.success('Password reset email sent');
+      return true;
+    } catch (error) {
+      errorLog('Error in resetPassword:', error);
+      toast.error('Something went wrong while resetting password');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updateProfile = async (userData: any): Promise<boolean> => {
+    try {
+      setIsLoading(true);
+      if (!user) return false;
+
+      const { success, error } = await authService.updateProfile(user.id, userData);
+      
+      if (!success || error) {
+        toast.error(error?.message || 'Failed to update profile');
+        return false;
+      }
+
+      // Update local user state
+      setUser(prev => prev ? { ...prev, ...userData } : null);
+      toast.success('Profile updated successfully');
+      return true;
+    } catch (error) {
+      errorLog('Error in updateProfile:', error);
+      toast.error('Something went wrong while updating profile');
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const redirectToDashboard = useCallback(() => {
     if (!isAuthenticated || !userRole) {
@@ -329,33 +424,43 @@ export const useAuth = () => {
     console.log(`Redirecting to dashboard: ${dashboardUrl}`);
     
     // Use window.location for a complete refresh rather than React Router navigation
-    window.location.href = dashboardUrl;
+    // Ensure the path has a leading slash
+    window.location.href = dashboardUrl.startsWith('/') ? dashboardUrl : `/${dashboardUrl}`;
   }, [isAuthenticated, userRole, getDashboardUrlForRole]);
 
-  // Add this function near the redirectToDashboard function
-  const directNavigateToDashboard = useCallback((role: UserRole) => {
-    const dashboardUrl = role === 'ambassador' ? '/ambassador-dashboard' : '/patient-dashboard';
-    console.log(`Directly navigating to dashboard: ${dashboardUrl}`);
-    window.location.href = dashboardUrl;
-  }, []);
+  // Add getFullName function
+  const getFullName = useCallback(() => {
+    if (!user) return '';
+    return user.full_name || 'User';
+  }, [user]);
 
-  return {
+  const value = {
     user,
+    isAuthenticated,
     userRole,
     isLoading,
-    isAuthenticating,
-    isAuthenticated,
-    login,
-    signup,
+    signin,
     signout,
-    getFullName,
-    getDashboardUrl,
+    signup,
+    resetPassword,
+    updateProfile,
     getDashboardUrlForRole,
+    refreshUserSession,
     redirectToDashboard,
-    directNavigateToDashboard,
-    setIsAuthenticating
+    getFullName
   };
-};
 
-export const useAuthState = useAuth;
-export default useAuth;
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+} 

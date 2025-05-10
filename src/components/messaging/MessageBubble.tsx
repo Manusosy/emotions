@@ -5,22 +5,33 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { CheckIcon, CheckCheck } from "lucide-react";
 
 interface MessageBubbleProps {
-  content: string;
-  timestamp: string;
+  content?: string;
+  message?: string; // Legacy naming
+  timestamp?: string;
+  time?: string; // Legacy naming
   isCurrentUser: boolean;
   avatarUrl?: string;
   senderName: string;
   read?: boolean;
+  isRead?: boolean; // Legacy naming
 }
 
 export const MessageBubble = ({
   content,
+  message,
   timestamp,
+  time,
   isCurrentUser,
   avatarUrl,
   senderName,
-  read
+  read,
+  isRead
 }: MessageBubbleProps) => {
+  // Support both naming conventions
+  const messageContent = content || message || "";
+  const messageTime = timestamp || time || new Date().toISOString();
+  const messageRead = read ?? isRead ?? false;
+  
   const initials = senderName
     .split(" ")
     .map((n) => n[0])
@@ -50,7 +61,7 @@ export const MessageBubble = ({
               : "bg-muted text-foreground rounded-tl-none"
           )}
         >
-          <p className="whitespace-pre-wrap break-words">{content}</p>
+          <p className="whitespace-pre-wrap break-words">{messageContent}</p>
         </div>
         
         <div className={cn(
@@ -58,19 +69,19 @@ export const MessageBubble = ({
           isCurrentUser ? "justify-end" : "justify-start",
           "text-muted-foreground"
         )}>
-          {format(new Date(timestamp), "h:mm a")}
+          {format(new Date(messageTime), "h:mm a")}
           {isCurrentUser && (
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger>
-                  {read ? (
+                  {messageRead ? (
                     <CheckCheck className="h-3 w-3 text-blue-500" />
                   ) : (
                     <CheckIcon className="h-3 w-3" />
                   )}
                 </TooltipTrigger>
                 <TooltipContent>
-                  {read ? "Read" : "Delivered"}
+                  {messageRead ? "Read" : "Delivered"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

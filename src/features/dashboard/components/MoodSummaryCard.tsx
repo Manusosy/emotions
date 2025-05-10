@@ -1,6 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { 
   Smile, 
@@ -18,14 +17,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { format, parseISO, differenceInDays } from "date-fns";
-
-interface MoodSummary {
-  totalEntries: number;
-  averageScore: number;
-  lastAssessment: string | null;
-  mostFrequentMood: string;
-  streakDays: number;
-}
+import { moodService, MoodSummary } from "@/services/moodService";
+import { errorLog, devLog } from "@/utils/environment";
+import { notificationService } from "@/lib/notificationService";
+import { fetchWithErrorHandling } from "@/utils/error-handling";
 
 // Function to interpret mood score
 const getMoodDescription = (score: number): string => {
@@ -52,129 +47,45 @@ export default function MoodSummaryCard() {
 
   // Create a memoized function to fetch mood summary data
   const fetchMoodSummary = useCallback(async () => {
-    if (!user) return;
+    if (!user?.id) return;
 
     try {
       setIsLoading(true);
       
-      // Fetch mood entries
-      const { data: moodEntries, error } = await supabase
-        .from('mood_entries')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-
-      if (error) throw error;
-
-      if (moodEntries && moodEntries.length > 0) {
-        // Calculate average score
-        const averageScore = moodEntries.reduce((acc, entry) => acc + entry.mood_score, 0) / moodEntries.length;
-        
-        // Calculate last assessment date
-        const lastAssessment = moodEntries[0]?.created_at || null;
-        
-        // Calculate streak
-        let streakDays = 0;
-        if (moodEntries.length > 0) {
-          // Sort entries by date (newest first)
-          const sortedEntries = [...moodEntries].sort((a, b) => 
-            new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
-          );
-          
-          // Check if latest entry is from today or yesterday
-          const latestDate = parseISO(sortedEntries[0].created_at);
-          const today = new Date();
-          const daysDifference = differenceInDays(today, latestDate);
-          
-          if (daysDifference <= 1) {
-            // Start counting streak
-            streakDays = 1;
-            let previousDate = latestDate;
-            
-            // Loop through other entries to find consecutive days
-            for (let i = 1; i < sortedEntries.length; i++) {
-              const currentDate = parseISO(sortedEntries[i].created_at);
-              // If entries are from consecutive days
-              if (differenceInDays(previousDate, currentDate) === 1) {
-                streakDays++;
-                previousDate = currentDate;
-              } else {
-                break;
-              }
-            }
-          }
-        }
-
-        // Count mood frequencies
-        const moodFrequencies = moodEntries.reduce((acc, entry) => {
-          acc[entry.assessment_result] = (acc[entry.assessment_result] || 0) + 1;
-          return acc;
-        }, {} as Record<string, number>);
-
-        // Find most frequent mood
-        const mostFrequentMood = Object.entries(moodFrequencies)
-          .sort(([,a], [,b]) => b - a)[0][0];
-
-        setSummary({
-          totalEntries: moodEntries.length,
-          averageScore,
-          lastAssessment,
-          mostFrequentMood,
-          streakDays
-        });
-      } else {
-        // No entries found
-        setSummary({
-          totalEntries: 0,
-          averageScore: 0,
-          lastAssessment: null,
-          mostFrequentMood: 'No data',
-          streakDays: 0
-        });
+      // Call the mood service directly
+      const data = await moodService.getMoodSummary(user.id);
+      if (data) {
+        setSummary(data);
       }
     } catch (error) {
-      console.error('Error fetching mood summary:', error);
+      errorLog('Error fetching mood summary:', error);
     } finally {
       setIsLoading(false);
     }
-  }, [user]);
+  }, [user?.id]);
 
-  // Initial fetch on component mount
+  // Initial fetch on component mount and subscribe to mood updates
   useEffect(() => {
+    if (!user?.id) return;
+    
+    // Initial fetch
     fetchMoodSummary();
-  }, [fetchMoodSummary]);
-
-  // Setup real-time subscription to mood_entries table
-  useEffect(() => {
-    if (!user) return;
-
-    // Setup subscription to mood_entries changes
-    const channel = supabase
-      .channel('mood_entries_changes')
-      .on(
-        'postgres_changes',
-        {
-          event: '*',
-          schema: 'public',
-          table: 'mood_entries',
-          filter: `user_id=eq.${user.id}`
-        },
-        () => {
-          // Refresh data when changes are detected for this user
-          fetchMoodSummary();
-        }
-      )
-      .subscribe();
-
-    // Also set up a periodic refresh every 30 seconds
-    const intervalId = setInterval(fetchMoodSummary, 30000);
-
+    
+    // Subscribe to mood entries updates using the notification service
+    const subscriptionId = notificationService.subscribe('mood_entries', user.id, 30000);
+    
+    // Add a listener to update the summary when new mood entries are received
+    notificationService.addListener('mood_entries', user.id, () => {
+      devLog('Mood entries updated, refreshing summary');
+      fetchMoodSummary();
+    });
+    
     return () => {
-      // Clean up subscription and interval on unmount
-      supabase.removeChannel(channel);
-      clearInterval(intervalId);
+      // Clean up subscription and listener when component unmounts
+      notificationService.unsubscribe(subscriptionId);
+      notificationService.removeListener('mood_entries', user.id, fetchMoodSummary);
     };
-  }, [user, fetchMoodSummary]);
+  }, [user?.id, fetchMoodSummary]);
 
   const formatLastAssessment = (dateString: string | null) => {
     if (!dateString) return 'Never';

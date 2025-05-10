@@ -1,20 +1,18 @@
-import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, Edit, Trash2, Calendar, Clock, Smile } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import { Button } from '@/components/ui/button';
+import { ChevronLeft, Pencil, Trash, Flag, Tag } from 'lucide-react';
+import { Spinner } from "@/components/ui/spinner";
 import { Badge } from "@/components/ui/badge";
-import { format } from "date-fns";
-import { useToast } from "@/components/ui/use-toast";
-import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { format } from 'date-fns';
+import { useAuth } from '@/hooks/use-auth';
 
 interface JournalEntry {
   id: string;
   title: string;
   content: string;
-  mood: string | number;
+  mood: number;
   tags?: string[];
   created_at: string;
   updated_at: string;
@@ -22,245 +20,182 @@ interface JournalEntry {
   tomorrows_intention?: string;
 }
 
+// Mock entry for demo purposes
+const mockEntry: JournalEntry = {
+  id: "entry-1",
+  title: "Finally Making Progress",
+  content: "<p>I'm starting to see improvements in my anxiety levels after consistent practice of mindfulness. Today was particularly good as I was able to use the breathing techniques during a stressful meeting.</p><p>I noticed that when I start feeling anxious, if I can catch it early enough, the 4-7-8 breathing method really helps calm me down before the anxiety escalates.</p><p>My mood mentor suggested I try to identify specific triggers, which has been helpful. Work presentations seem to be the biggest trigger right now, but I'm getting better at managing them.</p>",
+  mood: 8,
+  tags: ["progress", "mindfulness", "anxiety", "work"],
+  created_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  updated_at: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+  user_id: "user-1",
+  tomorrows_intention: "I will practice mindfulness for 10 minutes in the morning before checking emails."
+};
+
 export default function JournalEntryPage() {
-  const { entryId } = useParams();
+  const { entryId } = useParams<{ entryId: string }>();
   const navigate = useNavigate();
-  const { toast } = useToast();
+  const { isAuthenticated } = useAuth();
   const [entry, setEntry] = useState<JournalEntry | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Get mood color based on mood name
-  const getMoodColor = (mood: string | number | undefined) => {
-    if (!mood) return "";
-    
-    // If mood is a number, convert to a general category
-    if (typeof mood === 'number') {
-      if (mood >= 8) return 'bg-green-500 text-white';
-      if (mood >= 6) return 'bg-blue-500 text-white';
-      if (mood >= 4) return 'bg-gray-500 text-white';
-      if (mood >= 2) return 'bg-yellow-500 text-white';
-      return 'bg-red-500 text-white';
-    }
-    
-    // If mood is a string, match it to categories
-    const moodLower = mood.toLowerCase();
-    switch(moodLower) {
-      case 'happy':
-      case 'excited':
-      case 'content':
-        return 'bg-green-500 text-white';
-      case 'calm':
-      case 'relaxed':
-        return 'bg-blue-500 text-white';
-      case 'neutral':
-      case 'okay':
-        return 'bg-gray-500 text-white';
-      case 'anxious':
-      case 'worried':
-        return 'bg-yellow-500 text-white';
-      case 'sad':
-      case 'depressed':  
-        return 'bg-indigo-500 text-white';
-      case 'angry':
-      case 'frustrated':
-        return 'bg-red-500 text-white';
-      default:
-        return 'bg-slate-500 text-white';
-    }
-  };
-
+  
   useEffect(() => {
     const fetchEntry = async () => {
-      if (!entryId) return;
-
       try {
         setIsLoading(true);
         setError(null);
-
-        const { data, error } = await supabase
-          .from("journal_entries")
-          .select("*")
-          .eq("id", entryId)
-          .single();
-
-        if (error) throw error;
-
-        if (data) {
-          setEntry(data as JournalEntry);
-        } else {
-          setError("Journal entry not found");
-        }
+        
+        // For demo purposes, use mock data
+        // In a real app, fetch from API or database
+        setTimeout(() => {
+          setEntry(mockEntry);
+          setIsLoading(false);
+        }, 800);
       } catch (err: any) {
-        console.error("Error fetching journal entry:", err);
-        setError(err.message || "Failed to load journal entry");
-        toast({
-          title: "Error",
-          description: "Failed to load journal entry",
-          variant: "destructive",
-        });
-      } finally {
+        console.error('Error fetching journal entry:', err);
+        setError('Failed to load entry. Please try again.');
         setIsLoading(false);
       }
     };
-
+    
     fetchEntry();
-  }, [entryId, toast]);
-
-  const handleDelete = async () => {
-    if (!entryId || !entry) return;
-
-    if (window.confirm("Are you sure you want to delete this journal entry? This action cannot be undone.")) {
-      try {
-        const { error } = await supabase
-          .from("journal_entries")
-          .delete()
-          .eq("id", entryId);
-
-        if (error) throw error;
-
-        toast({
-          title: "Success",
-          description: "Journal entry deleted successfully",
-        });
-
-        navigate("/patient-dashboard/journal");
-      } catch (err: any) {
-        console.error("Error deleting journal entry:", err);
-        toast({
-          title: "Error",
-          description: "Failed to delete journal entry",
-          variant: "destructive",
-        });
-      }
+  }, [entryId]);
+  
+  const handleGoBack = () => {
+    if (isAuthenticated) {
+      navigate('/patient-dashboard/journal');
+    } else {
+      navigate('/journal');
     }
   };
-
-  // Fallback content for demo purposes
-  const demoEntry: JournalEntry = {
-    id: entryId || "entry-1",
-    title: "My Journey with Anxiety",
-    content: `<p>Today was a challenging day but I managed to use the breathing techniques I learned in therapy. I noticed that my anxiety levels decreased after practicing mindfulness for about 15 minutes.</p><p>Things that helped today:</p><ul><li>Deep breathing exercises</li><li>Taking a short walk outside</li><li>Limiting caffeine intake</li><li>Talking to a friend</li></ul><p>I'm proud of myself for recognizing my triggers early and applying the coping strategies before the anxiety escalated.</p>`,
-    mood: 7,
-    tags: ["anxiety", "coping", "progress"],
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    user_id: "user-1"
+  
+  const handleEdit = () => {
+    if (isAuthenticated) {
+      navigate(`/patient-dashboard/journal/edit/${entryId}`);
+    } else {
+      navigate(`/journal/edit/${entryId}`);
+    }
   };
-
-  // If loading, show skeleton
+  
+  const formatDate = (dateStr: string) => {
+    try {
+      return format(new Date(dateStr), 'MMMM d, yyyy - h:mm a');
+    } catch (e) {
+      return dateStr;
+    }
+  };
+  
+  // Function to get mood color based on value
+  const getMoodColor = (mood: number) => {
+    if (mood >= 8) return 'bg-green-500';
+    if (mood >= 6) return 'bg-teal-500';
+    if (mood >= 4) return 'bg-yellow-500';
+    if (mood >= 2) return 'bg-orange-500';
+    return 'bg-red-500';
+  };
+  
+  // Function to get mood description
+  const getMoodDescription = (mood: number) => {
+    if (mood >= 8) return 'Great';
+    if (mood >= 6) return 'Good';
+    if (mood >= 4) return 'Okay';
+    if (mood >= 2) return 'Low';
+    return 'Very Low';
+  };
+  
   if (isLoading) {
     return (
-      <DashboardLayout>
-        <div className="container mx-auto py-8">
-          <Card>
-            <CardHeader>
-              <Skeleton className="h-8 w-3/4" />
-              <Skeleton className="h-4 w-1/2 mt-2" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-3/4" />
-                <Skeleton className="h-4 w-5/6" />
-                <Skeleton className="h-4 w-full" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </DashboardLayout>
+      <div className="flex flex-col items-center justify-center min-h-[400px]">
+        <Spinner size="lg" className="mb-4" />
+        <p className="text-gray-500">Loading entry...</p>
+      </div>
     );
   }
-
-  // If error, show error message
+  
   if (error) {
     return (
-      <DashboardLayout>
-        <div className="container mx-auto py-8">
-          <Card>
-            <CardHeader>
-              <CardTitle>Error</CardTitle>
-              <CardDescription>Failed to load journal entry</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p>{error}</p>
-            </CardContent>
-            <CardFooter>
-              <Button onClick={() => navigate("/patient-dashboard/journal")}>
-                <ChevronLeft className="mr-2 h-4 w-4" />
-                Back to Journal
-              </Button>
-            </CardFooter>
-          </Card>
-        </div>
-      </DashboardLayout>
+      <div className="text-center py-12">
+        <p className="text-red-500 mb-4">{error}</p>
+        <Button onClick={handleGoBack} variant="outline">
+          <ChevronLeft className="mr-2 h-4 w-4" />
+          Back to Journal
+        </Button>
+      </div>
     );
   }
-
-  // Use real entry or demo entry as fallback
-  const displayEntry = entry || demoEntry;
-  const formattedDate = displayEntry.created_at 
-    ? format(new Date(displayEntry.created_at), "MMMM d, yyyy")
-    : "Date not available";
-  const formattedTime = displayEntry.created_at
-    ? format(new Date(displayEntry.created_at), "h:mm a")
-    : "Time not available";
-
+  
+  if (!entry) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-gray-600 mb-4">Entry not found</p>
+        <Button onClick={handleGoBack} variant="outline">
+          <ChevronLeft className="mr-2 h-4 w-4" />
+          Back to Journal
+        </Button>
+      </div>
+    );
+  }
+  
   return (
-    <DashboardLayout>
-      <div className="container mx-auto py-6">
-        <Card>
-          <CardHeader className="flex flex-row items-start justify-between">
-            <div>
-              <CardTitle className="text-2xl">{displayEntry.title}</CardTitle>
-              <div className="flex items-center mt-2 space-x-4">
-                <div className="flex items-center text-sm text-muted-foreground">
-                  <Calendar className="mr-1 h-4 w-4" />
-                  {formattedDate}
-                </div>
-                <div className="flex items-center text-sm text-muted-foreground">
-                  <Clock className="mr-1 h-4 w-4" />
-                  {formattedTime}
-                </div>
-                <div className="flex items-center text-sm">
-                  <Smile className="mr-1 h-4 w-4 text-yellow-500" />
-                  <Badge className={`${getMoodColor(displayEntry.mood)}`}>
-                    Mood: {displayEntry.mood}{typeof displayEntry.mood === 'number' ? '/10' : ''}
-                  </Badge>
-                </div>
+    <div className="max-w-3xl mx-auto px-4 sm:px-6 py-8">
+      <div className="mb-6">
+        <Button 
+          variant="ghost" 
+          onClick={handleGoBack}
+          className="mb-4 pl-0 hover:bg-transparent"
+        >
+          <ChevronLeft className="mr-2 h-4 w-4" />
+          Back to Journal
+        </Button>
+        
+        <div className="flex justify-between items-start">
+          <h1 className="text-3xl font-bold text-gray-900">{entry.title}</h1>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={handleEdit}>
+              <Pencil className="h-4 w-4 mr-1" />
+              Edit
+            </Button>
+          </div>
+        </div>
+        
+        <div className="flex items-center mt-2 text-sm text-gray-500">
+          <time dateTime={entry.created_at}>{formatDate(entry.created_at)}</time>
+        </div>
+      </div>
+      
+      <Card className="mb-6">
+        <CardContent className="pt-6">
+          <div className="flex justify-between items-start mb-4">
+            <div className="flex items-center">
+              <div className={`w-8 h-8 rounded-full ${getMoodColor(entry.mood)} flex items-center justify-center text-white font-medium mr-2`}>
+                {entry.mood}
               </div>
+              <span className="text-gray-700">Mood: {getMoodDescription(entry.mood)}</span>
             </div>
-            <div className="flex space-x-2">
-              <Button variant="outline" size="sm" onClick={handleDelete}>
-                <Trash2 className="mr-1 h-4 w-4" />
-                Delete
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: displayEntry.content }} />
-            {displayEntry.tags && displayEntry.tags.length > 0 && (
-              <div className="flex flex-wrap gap-2 mt-6">
-                {displayEntry.tags.map((tag, idx) => (
-                  <Badge key={idx} variant="secondary">
+            
+            {entry.tags && entry.tags.length > 0 && (
+              <div className="flex flex-wrap gap-2">
+                {entry.tags.map(tag => (
+                  <Badge key={tag} variant="secondary" className="text-xs">
                     {tag}
                   </Badge>
                 ))}
               </div>
             )}
-          </CardContent>
-          <CardFooter className="flex justify-between">
-            <Button variant="outline" onClick={() => navigate("/patient-dashboard/journal")}>
-              <ChevronLeft className="mr-2 h-4 w-4" />
-              Back to Journal
-            </Button>
-            <Button variant="default" onClick={() => navigate("/patient-dashboard/journal/new")}>
-              Create New Entry
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
-    </DashboardLayout>
+          </div>
+          
+          <div className="prose max-w-none" dangerouslySetInnerHTML={{ __html: entry.content }} />
+          
+          {entry.tomorrows_intention && (
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <h3 className="font-medium text-blue-800 mb-2">Tomorrow's Intention</h3>
+              <p className="text-blue-700">{entry.tomorrows_intention}</p>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 } 

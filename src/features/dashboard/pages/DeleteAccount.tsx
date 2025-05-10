@@ -9,7 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AlertTriangle, ArrowLeft, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
+import { userService } from "@/services/userService";
 
 export default function DeleteAccount() {
   const [confirmationText, setConfirmationText] = useState("");
@@ -27,22 +27,15 @@ export default function DeleteAccount() {
     Object.values(agreements).every(value => value === true);
 
   const handleDeleteAccount = async () => {
-    if (!isFormValid) return;
+    if (!isFormValid || !user?.id) return;
     
     try {
       setIsDeleting(true);
       
-      // This is where you would implement the actual account deletion logic
-      // For now, we'll just simulate it with a delay and redirect to home
-      
-      // Example deletion code (commented out for safety):
-      // const { error } = await supabase.auth.admin.deleteUser(user.id);
-      // if (error) throw error;
+      // Delete the user account
+      await userService.deleteUserAccount(user.id);
       
       toast.success("Account deletion initiated");
-      
-      // Simulate API delay
-      await new Promise(resolve => setTimeout(resolve, 2000));
       
       // Log out the user
       await signout();

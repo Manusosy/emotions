@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { 
@@ -47,7 +46,8 @@ import { Appointment as AppointmentRecord, Message, UserProfile } from "@/types/
 import { format, parseISO } from "date-fns";
 import { jsPDF } from "jspdf";
 import 'jspdf-autotable';
-import { patientService } from "@/integrations/supabase/services/patient.service";
+import { api } from "@/lib/api";
+import { errorLog } from "@/utils/environment";
 
 // Define interfaces for appointment data
 interface Ambassador {
@@ -72,56 +72,7 @@ export default function PatientDashboard() {
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([
-    {
-      id: 'EMHA01',
-      date: '12 Nov 2023',
-      time: '10:00 AM',
-      type: 'Video Consultation',
-      status: 'Upcoming',
-      ambassador: {
-        name: 'Dr. Sophie Chen',
-        specialization: 'Psychiatrist'
-      },
-      notes: 'Follow-up on medication efficacy'
-    },
-    {
-      id: 'EMHA02',
-      date: '18 Nov 2023',
-      time: '2:30 PM',
-      type: 'Phone Call',
-      status: 'Upcoming',
-      ambassador: {
-        name: 'Michael Roberts',
-        specialization: 'Wellness Coach'
-      },
-      notes: 'Weekly check-in'
-    },
-    {
-      id: 'EMHA03',
-      date: '25 Nov 2023',
-      time: '11:15 AM',
-      type: 'In-person',
-      status: 'Upcoming',
-      ambassador: {
-        name: 'Dr. James Wilson',
-        specialization: 'Therapist'
-      },
-      notes: 'Therapy session'
-    },
-    {
-      id: 'EMHA04',
-      date: '30 Nov 2023',
-      time: '4:00 PM',
-      type: 'Video Consultation',
-      status: 'Upcoming',
-      ambassador: {
-        name: 'Emma Thompson',
-        specialization: 'Nutritionist'
-      },
-      notes: 'Dietary plan review'
-    }
-  ]);
+  const [upcomingAppointments, setUpcomingAppointments] = useState<Appointment[]>([]);
   const [supportGroups, setSupportGroups] = useState<any[]>([]);
   const [recentJournalEntries, setRecentJournalEntries] = useState<any[]>([]);
   const [appointmentFilter, setAppointmentFilter] = useState<string>("all");
@@ -158,488 +109,118 @@ export default function PatientDashboard() {
     const fetchDashboardData = async () => {
       try {
         setIsLoading(true);
-        const { data: { session } } = await supabase.auth.getSession();
-        
-        // Check local storage for auth data when no session found
-        if (!session) {
-          const storedAuthState = localStorage.getItem('auth_state');
-          if (storedAuthState) {
-            try {
-              const { isAuthenticated, userRole } = JSON.parse(storedAuthState);
-              if (!isAuthenticated || userRole !== 'patient') {
-                navigate('/login');
-                return;
-              }
-              // Continue with stored auth - we'll use default/mock data
-            } catch (e) {
-              console.error("Error parsing stored auth state:", e);
-              navigate('/login');
-              return;
-            }
-          } else {
-            navigate('/login');
-            return;
-          }
+
+        if (!user?.id) {
+          navigate('/login');
+          return;
         }
 
-        // Create profile from user metadata or use default data if not available
-        const userProfile: UserProfile = {
-          id: session?.user?.id || 'unknown',
-          patient_id: session?.user?.user_metadata?.patient_id || 'EMHA01P',
-          first_name: session?.user?.user_metadata?.first_name || 'Demo',
-          last_name: session?.user?.user_metadata?.last_name || 'User',
-          email: session?.user?.email || 'demo@example.com',
-          phone_number: session?.user?.user_metadata?.phone_number || '',
-          date_of_birth: session?.user?.user_metadata?.date_of_birth || '',
-          country: session?.user?.user_metadata?.country || 'United States',
-          address: session?.user?.user_metadata?.address || '',
-          city: session?.user?.user_metadata?.city || '',
-          state: session?.user?.user_metadata?.state || '',
-          pincode: session?.user?.user_metadata?.pincode || '',
-          avatar_url: session?.user?.user_metadata?.avatar_url || '',
-          created_at: new Date().toISOString()
-        };
+        // Fetch user profile
+        const profileResponse = await api.get(`/api/patients/${user.id}/profile`);
+        const profileData = await profileResponse.json();
 
         if (isMounted) {
-          setProfile(userProfile);
+          setProfile(profileData);
         }
 
         // Fetch appointments
-        const { data: appointmentsData, error: appointmentsError } = await supabase
-          .from("appointments")
-          .select("*")
-          .eq("patient_id", session.user.id)
-          .order("date", { ascending: true });
+        const appointmentsResponse = await api.get(`/api/patients/${user.id}/appointments`);
+        const appointmentsData = await appointmentsResponse.json();
 
-        if (appointmentsError) {
-          console.error("Error fetching appointments:", appointmentsError);
-          // Use mock data instead
-          const mockAppointments: Appointment[] = [
-            {
-              id: "1",
-              date: "2023-10-15", // These properties are for mock appointments only
-              time: "10:00 AM",
-              type: "video",
-              status: "upcoming",
-              patient_id: session.user.id,
-              ambassador_id: "amb-123",
-              notes: null,
-              duration: "60 minutes"
-            },
-            {
-              id: "2",
-              date: "2023-10-20",
-              time: "2:30 PM",
-              type: "voice",
-              status: "upcoming",
-              patient_id: session.user.id,
-              ambassador_id: "amb-456",
-              notes: null,
-              duration: "45 minutes"
-            }
-          ] as any; // Type assertion to avoid properties mismatch
-          
-          if (isMounted) {
-            setAppointments(mockAppointments);
-          }
-        } else {
-          // Map the database results to the expected Appointment type
-          const mappedAppointments: Appointment[] = appointmentsData.map(appt => ({
-            id: appt.id,
-            // Convert database fields to match the expected Appointment type
-            date: appt.start_time ? new Date(appt.start_time).toISOString().split('T')[0] : '',
-            time: appt.start_time ? new Date(appt.start_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-            type: appt.meeting_link ? 'video' : 'chat',
-            status: appt.status || "pending",
-            patient_id: appt.patient_id,
-            ambassador_id: appt.ambassador_id,
-            notes: appt.description || null,
-            duration: appt.end_time && appt.start_time ? 
-              `${Math.round((new Date(appt.end_time).getTime() - new Date(appt.start_time).getTime()) / 60000)} minutes` 
-              : "30 minutes"
-          })) as any; // Type assertion to avoid properties mismatch
-          
-          if (isMounted) {
-            setAppointments(mappedAppointments);
-          }
+        if (isMounted) {
+          setAppointments(appointmentsData);
+          // Filter upcoming appointments
+          const upcoming = appointmentsData.filter((appt: Appointment) => appt.status === 'upcoming');
+          setUpcomingAppointments(upcoming);
         }
-        
+
         // Fetch messages
-        const { data: messagesData, error: messagesError } = await supabase
-          .from("messages")
-          .select(`
-            id,
-            content,
-            created_at,
-            unread
-          `)
-          .eq("recipient_id", session.user.id)
-          .order("created_at", { ascending: false })
-          .limit(5);
+        const messagesResponse = await api.get(`/api/patients/${user.id}/messages`);
+        const messagesData = await messagesResponse.json();
 
-        if (messagesError) {
-          console.error("Error fetching messages:", messagesError);
-          // Use mock data instead
-          const mockMessages: Message[] = [
-            {
-              id: "1",
-              sender: {
-                id: "1",
-                full_name: "Sarah Johnson (Ambassador)",
-                avatar_url: "/lovable-uploads/47ac3dae-2498-4dd3-a729-73086f5c34f8.png"
-              },
-              content: "Hi there! Just checking in on how you're feeling after our last session.",
-              created_at: new Date().toISOString(),
-              timestamp: "10:30 AM",
-              unread: true
-            },
-            {
-              id: "2",
-              sender: {
-                id: "2",
-                full_name: "Michael Chen (Ambassador)",
-                avatar_url: ""
-              },
-              content: "Don't forget to complete your daily mood tracking exercise.",
-              created_at: new Date().toISOString(),
-              timestamp: "Yesterday",
-              unread: false
-            }
-          ];
-          
-          if (isMounted) {
-            setMessages(mockMessages);
-          }
-        } else if (messagesData) {
-          // Map the database results to the expected Message type
-          const mappedMessages: Message[] = messagesData.map(msg => ({
-            id: msg.id,
-            sender: {
-              id: "sender-id", // Placeholder since we don't have this data
-              full_name: "Support Team" // Placeholder since we don't have this data
-            },
-            content: msg.content,
-            created_at: msg.created_at,
-            timestamp: new Date(msg.created_at).toLocaleTimeString(),
-            unread: msg.unread || false
-          }));
-          
-          if (isMounted) {
-            setMessages(mappedMessages);
-          }
-        }
-
-        // Fetch upcoming appointments
-        const { data: upcomingAppointmentsData, error: upcomingAppointmentsError } = await supabase
-          .from('appointments')
-          .select(`
-            *,
-            ambassador_profiles (
-              full_name,
-              avatar_url
-            )
-          `)
-          .eq('patient_id', session.user.id)
-          .gte('start_time', new Date().toISOString())
-          .order('start_time')
-          .limit(5);
-
-        if (upcomingAppointmentsError) {
-          console.error("Error fetching upcoming appointments:", upcomingAppointmentsError);
-          setUpcomingAppointments([]);
-        } else {
-          setUpcomingAppointments(upcomingAppointmentsData || []);
+        if (isMounted) {
+          setMessages(messagesData);
         }
 
         // Fetch support groups
-        const { data: supportGroupsData, error: supportGroupsError } = await supabase
-          .from('group_members')
-          .select(`
-            *,
-            support_groups (
-              id,
-              name,
-              description,
-              group_type,
-              meeting_schedule,
-              ambassador_profiles (
-                full_name
-              )
-            )
-          `)
-          .eq('user_id', session.user.id)
-          .eq('status', 'active');
+        const groupsResponse = await api.get(`/api/support-groups`);
+        const groupsData = await groupsResponse.json();
 
-        if (supportGroupsError) {
-          console.error("Error fetching support groups:", supportGroupsError);
-          setSupportGroups([]);
-        } else {
-          setSupportGroups(supportGroupsData || []);
+        if (isMounted) {
+          setSupportGroups(groupsData);
         }
 
-        // Fetch recent journal entries
-        const { data: journalEntriesData, error: journalEntriesError } = await supabase
-          .from('journal_entries')
-          .select('*')
-          .eq('user_id', session.user.id)
-          .order('created_at', { ascending: false })
-          .limit(3);
+        // Fetch journal entries
+        const journalResponse = await api.get(`/api/patients/${user.id}/journal-entries`);
+        const journalData = await journalResponse.json();
 
-        if (journalEntriesError) {
-          console.error("Error fetching journal entries:", journalEntriesError);
-          setRecentJournalEntries([]);
-        } else {
-          setRecentJournalEntries(journalEntriesData || []);
+        if (isMounted) {
+          setRecentJournalEntries(journalData);
         }
 
-        // After fetching appointments and messages, also fetch user metrics
-        try {
-          // Fetch stress assessments to check if user has any assessments
-          const { data: assessments, error: assessmentsError } = await supabase
-            .from('stress_assessments')
-            .select('*')
-            .eq('user_id', session?.user?.id || 'unknown')
-            .order('created_at', { ascending: false });
-          
-          if (!assessmentsError && assessments && assessments.length > 0) {
-            // User has taken assessments
-            
-            // Get last assessment time from the most recent entry
-            const lastAssessment = assessments[0];
-            const lastAssessmentDateTime = new Date(lastAssessment.created_at);
-            const assessmentTimeString = lastAssessmentDateTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const assessmentDateString = `${lastAssessmentDateTime.toLocaleString('default', { month: 'short' })} ${lastAssessmentDateTime.getDate()}, ${lastAssessmentDateTime.getFullYear()}`;
-            
-            // Get metrics from user_assessment_metrics
-            const { data: metricsData } = await supabase
-              .from('user_assessment_metrics')
-              .select('*')
-              .eq('user_id', session?.user?.id || 'unknown')
-              .single();
-            
-            if (isMounted) {
-              // Convert stress_level from 0-1 scale to 0-10 scale for display
-              const stressLevel = metricsData?.stress_level * 10 || lastAssessment.stress_score || 0;
-              
-              setUserMetrics({
-                moodScore: 0, // Will be filled from mood tracking if available
-                stressLevel: stressLevel,
-                consistency: metricsData?.consistency || 0,
-                lastCheckInStatus: "Active",
-                streak: 0,
-                firstCheckInDate: ""
-              });
-              
-              setLastAssessmentDate(assessmentDateString);
-              setHasAssessments(true);
-            }
+        // Fetch user metrics
+        const metricsResponse = await api.get(`/api/patients/${user.id}/metrics`);
+        const metricsData = await metricsResponse.json();
 
-            // Calculate streak by checking consecutive days with entries
-            const dates = assessments.map(a => new Date(a.created_at).toDateString());
-            const uniqueDates = [...new Set(dates)].map(d => new Date(d));
-            uniqueDates.sort((a, b) => b.getTime() - a.getTime()); // Sort descending
-            
-            // Get today's date without time
-            const today = new Date();
-            today.setHours(0, 0, 0, 0);
-            
-            // Check if the most recent entry is from today
-            const mostRecentDate = uniqueDates[0];
-            mostRecentDate.setHours(0, 0, 0, 0);
-            
-            let streak = 0;
-            const msInDay = 24 * 60 * 60 * 1000;
-            
-            if (mostRecentDate.getTime() === today.getTime()) {
-              // Start counting streak from today
-              streak = 1;
-              let prevDate = today;
-              
-              // Check previous days
-              for (let i = 1; i < uniqueDates.length; i++) {
-                const currentDate = uniqueDates[i];
-                currentDate.setHours(0, 0, 0, 0);
-                
-                // If the current date is exactly one day before the previous date
-                const dayDiff = (prevDate.getTime() - currentDate.getTime()) / msInDay;
-                if (dayDiff === 1) {
-                  streak++;
-                  prevDate = currentDate;
-                } else {
-                  break; // Streak broken
-                }
-              }
-            }
-            
-            // Get first check-in date
-            const oldestDate = new Date(assessments[assessments.length - 1].created_at);
-            const firstCheckInDate = `${oldestDate.toLocaleString('default', { month: 'short' })} ${oldestDate.getDate()}, ${oldestDate.getFullYear()}`;
-            
-            if (isMounted) {
-              setUserMetrics(prevMetrics => ({
-                ...prevMetrics,
-                streak: streak,
-                firstCheckInDate: firstCheckInDate
-              }));
-            }
-          } else {
-            // New user with no assessments
-            if (isMounted) {
-              setUserMetrics({
-                moodScore: 0,
-                stressLevel: 0,
-                consistency: 0,
-                lastCheckInStatus: "No check-ins yet",
-                streak: 0,
-                firstCheckInDate: ""
-              });
-              setHasAssessments(false);
-              setLastAssessmentDate("Not taken");
-            }
-          }
-          
-          // Now additionally fetch mood entries (separate from assessments)
-          const { data: moodEntries, error: moodError } = await supabase
-            .from('mood_entries')
-            .select('*')
-            .eq('user_id', session?.user?.id || 'unknown')
-            .order('created_at', { ascending: false });
-          
-          if (!moodError && moodEntries && moodEntries.length > 0) {
-            // Calculate average mood score
-            const totalScore = moodEntries.reduce((sum, entry) => sum + entry.mood_score, 0);
-            const avgScore = parseFloat((totalScore / moodEntries.length).toFixed(1));
-            
-            // Get last check-in time from the most recent entry
-            const lastEntry = moodEntries[0];
-            const lastEntryDate = new Date(lastEntry.created_at);
-            const timeString = lastEntryDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-            const dateString = `${lastEntryDate.toLocaleString('default', { month: 'short' })} ${lastEntryDate.getDate()}, ${lastEntryDate.getFullYear()}`;
-            
-            if (isMounted) {
-              setUserMetrics(prevMetrics => ({
-                ...prevMetrics,
-                moodScore: avgScore,
-              }));
-              setLastCheckIn(timeString);
-              setLastCheckInDate(dateString);
-            }
-          }
-        } catch (error) {
-          console.error("Error fetching user metrics:", error);
-        } finally {
-          if (isMounted) {
-            setIsLoading(false);
-          }
+        if (isMounted) {
+          setUserMetrics(metricsData);
         }
 
-        // Fetch appointment reports using patientService
-        setReportsLoading(true);
-        try {
-          const { success, data, error } = await patientService.getAppointmentReports(
-            session.user.id, 
-            appointmentFilter
-          );
-          
-          if (success && data) {
-            setAppointmentReports(data);
-          } else if (error) {
-            console.error("Error fetching appointment reports:", error);
-            // Fall back to mock reports if real data fetch fails
-            setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-          } else {
-            // If no data or empty array, use mock data
-            setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-          }
-        } catch (err) {
-          console.error("Exception in appointment reports fetch:", err);
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        } finally {
+        // Fetch appointment reports
+        const reportsResponse = await api.get(`/api/patients/${user.id}/appointment-reports`);
+        const reportsData = await reportsResponse.json();
+
+        if (isMounted) {
+          setAppointmentReports(reportsData);
           setReportsLoading(false);
         }
-      } catch (error: any) {
-        console.error("Error fetching dashboard data:", error);
-        if (isMounted) {
-          toast.error(error.message || "Failed to load dashboard data");
-        }
+
+      } catch (error) {
+        errorLog("Error fetching dashboard data:", error);
+        toast.error("Failed to load dashboard data");
       } finally {
-        setIsLoading(false);
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
     };
 
     fetchDashboardData();
+
     return () => {
       isMounted = false;
     };
-  }, [navigate]);
-
-  // Update appointment reports when filter changes
-  useEffect(() => {
-    const updateAppointmentReports = async () => {
-      if (!user?.id) return;
-      
-      setReportsLoading(true);
-      try {
-        const { success, data, error } = await patientService.getAppointmentReports(
-          user.id, 
-          appointmentFilter
-        );
-        
-        if (success && data) {
-          setAppointmentReports(data);
-        } else if (error) {
-          console.error("Error fetching filtered appointment reports:", error);
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        } else {
-          setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-        }
-      } catch (err) {
-        console.error("Exception in filtered appointment reports fetch:", err);
-        setAppointmentReports(patientService.getMockAppointmentReports(appointmentFilter));
-      } finally {
-        setReportsLoading(false);
-      }
-    };
-    
-    updateAppointmentReports();
-  }, [user, appointmentFilter]);
+  }, [user, navigate]);
 
   const handleUpdateProfile = async (updatedData: Partial<UserProfile>) => {
     try {
-      if (!profile?.id) return;
-
-      const { data, error } = await supabase
-        .from("patient_profiles")
-        .update(updatedData)
-        .eq("id", profile.id)
-        .select()
-        .single();
-
-      if (error) throw error;
-
+      const response = await api.put(`/api/patients/${user?.id}/profile`, updatedData);
+      const data = await response.json();
+      
       if (data) {
-        setProfile(data);
+        setProfile(prev => ({ ...prev!, ...updatedData }));
         toast.success("Profile updated successfully");
       }
-    } catch (error: any) {
-      console.error("Error updating profile:", error);
-      toast.error(error.message || "Failed to update profile");
+    } catch (error) {
+      errorLog("Error updating profile:", error);
+      toast.error("Failed to update profile");
     }
   };
 
   const handleJournalClick = () => {
-    navigate('/patient-dashboard/journal');
+    navigate("/journal");
   };
 
   const handleSettingsClick = () => {
-    navigate('/settings');
+    navigate("/settings");
   };
 
   const handleSignout = async () => {
     try {
-      await supabase.auth.signOut();
+      await api.post('/api/auth/logout');
       navigate('/login');
     } catch (error) {
+      errorLog("Error signing out:", error);
       toast.error("Failed to sign out");
     }
   };
@@ -647,107 +228,106 @@ export default function PatientDashboard() {
   const handleExportPDF = () => {
     try {
       const doc = new jsPDF();
-
-      // Add title
-      doc.setFontSize(18);
-      doc.setTextColor(0, 0, 150);
-      doc.text('Appointment Reports', 14, 20);
-
-      // Add patient info
-      doc.setFontSize(11);
-      doc.setTextColor(0, 0, 0);
-      doc.text(`Patient: ${profile?.first_name} ${profile?.last_name}`, 14, 30);
-      doc.text(`Generated: ${new Date().toLocaleDateString()}`, 14, 36);
-
-      // Create data for table
-      const tableRows = appointmentReports.map(report => [
-        report.id, 
-        report.ambassador.name,
-        `${report.date}, ${report.time}`,
-        report.type,
-        report.status
-      ]);
-
-      // Add table with appointment data
-      (doc as any).autoTable({
-        head: [['ID', 'Mental Health Ambassador', 'Date', 'Type', 'Status']],
-        body: tableRows,
-        startY: 45,
-        styles: { 
-          fontSize: 9,
-          cellPadding: 3
-        },
-        headStyles: { 
-          fillColor: [32, 192, 243],
-          textColor: [255, 255, 255],
-          fontStyle: 'bold'
-        },
-        alternateRowStyles: {
-          fillColor: [240, 247, 255]
-        }
-      });
-
-      // Save the PDF
-      const fileName = `appointment_report_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(fileName);
       
-      toast.success("Appointment report has been downloaded");
+      // Add title
+      doc.setFontSize(20);
+      doc.text("Patient Health Report", 20, 20);
+      
+      // Add patient info
+      doc.setFontSize(12);
+      doc.text(`Name: ${profile?.first_name} ${profile?.last_name}`, 20, 40);
+      doc.text(`Patient ID: ${profile?.patient_id}`, 20, 50);
+      doc.text(`Report Generated: ${new Date().toLocaleDateString()}`, 20, 60);
+      
+      // Add mood metrics
+      doc.text("Mood Metrics", 20, 80);
+      doc.autoTable({
+        startY: 90,
+        head: [["Metric", "Value"]],
+        body: [
+          ["Mood Score", userMetrics.moodScore.toString()],
+          ["Stress Level", userMetrics.stressLevel.toString()],
+          ["Consistency", userMetrics.consistency.toString()],
+          ["Current Streak", userMetrics.streak.toString()]
+        ],
+      });
+      
+      // Add appointments
+      const appointmentData = appointments.map(appt => [
+        appt.date,
+        appt.time,
+        appt.type,
+        appt.status,
+        appt.ambassador?.name || "N/A"
+      ]);
+      
+      doc.text("Appointment History", 20, doc.autoTable.previous.finalY + 20);
+      doc.autoTable({
+        startY: doc.autoTable.previous.finalY + 30,
+        head: [["Date", "Time", "Type", "Status", "Ambassador"]],
+        body: appointmentData,
+      });
+      
+      // Save the PDF
+      doc.save(`patient_report_${new Date().toISOString()}.pdf`);
+      toast.success("Report downloaded successfully");
     } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Failed to export appointments");
+      errorLog("Error generating PDF:", error);
+      toast.error("Failed to generate report");
     }
   };
 
   const handleExportAppointment = (appointmentId: string) => {
     try {
-      // Find the appointment in the reports
-      const appointment = appointmentReports.find(report => report.id === appointmentId);
-      
-      if (!appointment) {
-        toast.error("Appointment not found");
-        return;
-      }
+      const appointment = appointments.find(a => a.id === appointmentId);
+      if (!appointment) return;
       
       const doc = new jsPDF();
-
+      
       // Add title
-      doc.setFontSize(18);
-      doc.setTextColor(0, 0, 150);
-      doc.text('Appointment Details', 14, 20);
-
+      doc.setFontSize(20);
+      doc.text("Appointment Details", 20, 20);
+      
       // Add appointment info
       doc.setFontSize(12);
-      doc.setTextColor(0, 0, 0);
+      doc.text(`Appointment ID: ${appointment.id}`, 20, 40);
+      doc.text(`Date: ${appointment.date}`, 20, 50);
+      doc.text(`Time: ${appointment.time}`, 20, 60);
+      doc.text(`Type: ${appointment.type}`, 20, 70);
+      doc.text(`Status: ${appointment.status}`, 20, 80);
       
-      // Appointment details
-      doc.text(`ID: ${appointment.id}`, 14, 35);
-      doc.text(`Ambassador: ${appointment.ambassador.name}`, 14, 45);
-      doc.text(`Specialization: ${appointment.ambassador.specialization}`, 14, 55);
-      doc.text(`Date: ${appointment.date}`, 14, 65);
-      doc.text(`Time: ${appointment.time}`, 14, 75);
-      doc.text(`Type: ${appointment.type}`, 14, 85);
-      doc.text(`Status: ${appointment.status}`, 14, 95);
-      
-      // Add notes if available
-      if (appointment.notes) {
-        doc.text('Notes:', 14, 110);
-        doc.setFontSize(10);
-        
-        // Split notes into multiple lines if needed
-        const splitNotes = doc.splitTextToSize(appointment.notes, 180);
-        doc.text(splitNotes, 14, 120);
+      if (appointment.ambassador) {
+        doc.text(`Ambassador: ${appointment.ambassador.name}`, 20, 90);
+        doc.text(`Specialization: ${appointment.ambassador.specialization}`, 20, 100);
       }
-
-      // Save the PDF
-      const fileName = `appointment_${appointmentId.replace('#', '')}_${new Date().toISOString().split('T')[0]}.pdf`;
-      doc.save(fileName);
       
-      toast.success("Appointment details have been downloaded");
+      if (appointment.notes) {
+        doc.text("Notes:", 20, 110);
+        doc.text(appointment.notes, 20, 120);
+      }
+      
+      // Save the PDF
+      doc.save(`appointment_${appointmentId}_${new Date().toISOString()}.pdf`);
+      toast.success("Appointment details downloaded");
     } catch (error) {
-      console.error("Error generating PDF:", error);
-      toast.error("Failed to export appointment details");
+      errorLog("Error generating appointment PDF:", error);
+      toast.error("Failed to generate appointment details");
     }
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="container mx-auto py-10 px-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <Skeleton className="h-[200px] w-full" />
+            <Skeleton className="h-[200px] w-full" />
+            <Skeleton className="h-[200px] w-full" />
+          </div>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

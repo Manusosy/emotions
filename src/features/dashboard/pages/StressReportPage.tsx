@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { 
   ChevronLeft, 
@@ -26,6 +25,9 @@ import { Badge } from "@/components/ui/badge";
 import StressProgressChart from "../components/StressProgressChart";
 import { Spinner } from "@/components/ui/spinner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { api } from "@/lib/api";
+import { fetchWithErrorHandling } from "@/utils/error-handling";
+import { errorLog, devLog } from "@/utils/environment";
 
 // Define types for our data
 interface Assessment {
@@ -75,40 +77,45 @@ export default function StressReportPage() {
       
       setIsLoading(true);
       try {
-        // Fetch stress assessments
-        const { data: assessmentsData, error: assessmentsError } = await supabase
-          .from('stress_assessments' as keyof Tables)
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10);
-          
-        if (assessmentsError) throw assessmentsError;
+        // Fetch stress assessments using the API client
+        const { data: assessmentsData, error: assessmentsError } = await fetchWithErrorHandling<Assessment[]>(
+          () => api.get(`/api/stress-assessments?user_id=${user.id}&order=created_at.desc&limit=10`),
+          { 
+            defaultErrorMessage: 'Failed to fetch stress assessments',
+            showErrorToast: false
+          }
+        );
+        
+        if (assessmentsError) {
+          errorLog('Error fetching stress assessments:', assessmentsError);
+        }
         
         // Fetch mood entries for a more comprehensive view
-        const { data: moodData, error: moodError } = await supabase
-          .from('mood_entries' as keyof Tables)
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(20);
-          
-        if (moodError) throw moodError;
+        const { data: moodData, error: moodError } = await fetchWithErrorHandling<MoodEntry[]>(
+          () => api.get(`/api/mood-entries?user_id=${user.id}&order=created_at.desc&limit=20`),
+          { 
+            defaultErrorMessage: 'Failed to fetch mood entries',
+            showErrorToast: false
+          }
+        );
+        
+        if (moodError) {
+          errorLog('Error fetching mood entries:', moodError);
+        }
         
         // Fetch current stress metrics
-        const { data: metricsData, error: metricsError } = await supabase
-          .from('user_assessment_metrics')
-          .select('*')
-          .eq('user_id', user.id)
-          .single();
+        const { data: metricsData, error: metricsError } = await fetchWithErrorHandling(
+          () => api.get(`/api/user-assessment-metrics?user_id=${user.id}`),
+          { 
+            defaultErrorMessage: 'Failed to fetch user metrics',
+            showErrorToast: false
+          }
+        );
           
-        if (metricsError && metricsError.code !== 'PGRST116') throw metricsError;
-        
-        // Set data with type casting
-        setAssessments(assessmentsData as Assessment[] || []);
-        setMoodEntries(moodData as MoodEntry[] || []);
-        
+        // Set data
         if (assessmentsData && assessmentsData.length > 0) {
+          setAssessments(assessmentsData);
+          
           // Calculate assessments metrics
           const currentLevel = assessmentsData[0].stress_score;
           const lastAssessmentDate = new Date(assessmentsData[0].created_at);
@@ -191,37 +198,31 @@ export default function StressReportPage() {
             assessmentCount: 0,
             consistencyScore: 0
           });
-        } else {
-          // No data available
-          setStressMetrics({
-            currentLevel: 0,
-            weeklyAverage: 0,
-            monthlyAverage: 0,
-            trend: 'stable',
-            lastAssessmentDate: 'No assessments taken',
-            assessmentCount: 0,
-            consistencyScore: 0
-          });
         }
         
-        // Calculate mood metrics if available
+        // Process mood data if available
         if (moodData && moodData.length > 0) {
+          setMoodEntries(moodData);
+          
+          // Calculate mood metrics
           const currentScore = moodData[0].mood_score;
           
-          // Weekly average
+          // Last 7 days
           const weekAgo = new Date();
           weekAgo.setDate(weekAgo.getDate() - 7);
-          const weeklyMoods = moodData.filter(m => new Date(m.created_at) >= weekAgo);
-          const weeklyAvg = weeklyMoods.length > 0
-            ? weeklyMoods.reduce((sum, m) => sum + m.mood_score, 0) / weeklyMoods.length
+          const weeklyMoodEntries = moodData.filter(m => 
+            new Date(m.created_at) >= weekAgo
+          );
+          const weeklyAvg = weeklyMoodEntries.length > 0
+            ? weeklyMoodEntries.reduce((sum, m) => sum + m.mood_score, 0) / weeklyMoodEntries.length
             : currentScore;
             
           // Calculate trend
           let trend: 'improving' | 'declining' | 'stable' = 'stable';
-          if (weeklyMoods.length >= 3) {
-            const halfPoint = Math.floor(weeklyMoods.length / 2);
-            const firstHalf = weeklyMoods.slice(halfPoint);
-            const secondHalf = weeklyMoods.slice(0, halfPoint);
+          if (weeklyMoodEntries.length >= 3) {
+            const halfPoint = Math.floor(weeklyMoodEntries.length / 2);
+            const firstHalf = weeklyMoodEntries.slice(halfPoint);
+            const secondHalf = weeklyMoodEntries.slice(0, halfPoint);
             
             const firstHalfAvg = firstHalf.reduce((sum, m) => sum + m.mood_score, 0) / firstHalf.length;
             const secondHalfAvg = secondHalf.reduce((sum, m) => sum + m.mood_score, 0) / secondHalf.length;
@@ -231,19 +232,8 @@ export default function StressReportPage() {
             else if (secondHalfAvg < firstHalfAvg - 0.5) trend = 'declining';
           }
           
-          // Calculate consistency percentage (how many days they logged mood in the last 30 days)
-          const thirtyDaysAgo = new Date();
-          thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-          const lastThirtyDaysMoods = moodData.filter(m => new Date(m.created_at) >= thirtyDaysAgo);
-          
-          // Count unique days with entries
-          const uniqueDays = new Set();
-          lastThirtyDaysMoods.forEach(m => {
-            const dateStr = new Date(m.created_at).toDateString();
-            uniqueDays.add(dateStr);
-          });
-          
-          const consistencyPercentage = Math.round((uniqueDays.size / 30) * 100);
+          // Consistency percentage based on number of entries in the last 7 days
+          const consistencyPercentage = Math.min(100, Math.round((weeklyMoodEntries.length / 7) * 100));
           
           setMoodMetrics({
             currentScore: Number(currentScore.toFixed(1)),
@@ -253,12 +243,12 @@ export default function StressReportPage() {
           });
         }
       } catch (error) {
-        console.error("Error fetching stress data:", error);
+        errorLog('Error fetching stress report data:', error);
       } finally {
         setIsLoading(false);
       }
     };
-    
+
     fetchData();
   }, [user]);
   

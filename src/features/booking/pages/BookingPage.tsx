@@ -19,9 +19,12 @@ import {
 } from "@/components/ui/select";
 import { useRef } from "react";
 import HeroSection from "../components/HeroSection";
-import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { api } from "@/lib/api";
+import { useAuth } from "@/hooks/use-auth";
+import { fetchWithErrorHandling } from "@/utils/error-handling";
+import { errorLog, devLog } from "@/utils/environment";
 
 const steps = [
   { id: 1, name: "Specialty" },
@@ -46,7 +49,7 @@ const appointmentTypes = [
 const BookingPage = () => {
   const [currentStep, setCurrentStep] = useState(1);
   const [searchParams] = useSearchParams();
-  const ambassadorId = searchParams.get("ambassadorId");
+  const mentorId = searchParams.get("mentorId");
   const navigate = useNavigate();
   
   // State for form fields
@@ -61,25 +64,30 @@ const BookingPage = () => {
     concerns: "",
   });
   
-  const [user, setUser] = useState<any>(null);
-  const [ambassador, setAmbassador] = useState<any>(null);
+  const { user, isAuthenticated } = useAuth();
+  const [mentor, setMentor] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [showAuthDialog, setShowAuthDialog] = useState(false);
   
   useEffect(() => {
     const checkAuth = async () => {
-      const { data } = await supabase.auth.getSession();
-      if (data.session) {
-        setUser(data.session.user);
-        
+      if (isAuthenticated && user) {
         // Pre-fill user data if available
-        const userData = data.session.user.user_metadata;
-        if (userData) {
-          setFormData(prev => ({
-            ...prev,
-            name: `${userData.first_name || ""} ${userData.last_name || ""}`.trim(),
-            email: data.session.user.email || "",
-          }));
+        try {
+          const { data: userProfile, error } = await fetchWithErrorHandling(
+            () => api.get(`/api/users/${user.id}/profile`),
+            { showErrorToast: false }
+          );
+        
+          if (userProfile) {
+            setFormData(prev => ({
+              ...prev,
+              name: `${userProfile.firstName || ""} ${userProfile.lastName || ""}`.trim(),
+              email: user.email || "",
+            }));
+          }
+        } catch (err) {
+          errorLog('Error fetching user profile:', err);
         }
         
         // Check for saved booking data
@@ -123,35 +131,37 @@ const BookingPage = () => {
             // Remove saved booking data
             localStorage.removeItem("bookingData");
           } catch (error) {
-            console.error("Error restoring booking data:", error);
+            errorLog("Error restoring booking data:", error);
             // If there's an error parsing, just remove the data
             localStorage.removeItem("bookingData");
           }
         }
       }
       
-      // If we have an ambassador ID, fetch ambassador details
-      if (ambassadorId) {
-        await fetchAmbassadorDetails(ambassadorId);
+      // If we have a mentor ID, fetch mentor details
+      if (mentorId) {
+        await fetchMentorDetails(mentorId);
       } else {
         setLoading(false);
       }
     };
     
-    const fetchAmbassadorDetails = async (id: string) => {
+    const fetchMentorDetails = async (id: string) => {
       try {
-        // Fetch ambassador data from the database
-        const { data, error } = await supabase
-          .from("ambassador_profiles")
-          .select("*")
-          .eq("id", id)
-          .single();
+        // Fetch mentor data from the API
+        const { data, error } = await fetchWithErrorHandling(
+          () => api.get(`/api/mood-mentors/${id}`),
+          {
+            defaultErrorMessage: 'Failed to load mood mentor details',
+            showErrorToast: false
+          }
+        );
           
         if (error) {
-          console.error("Error fetching ambassador details:", error);
+          errorLog("Error fetching mood mentor details:", error);
           
           // For development/demo purposes - Use hard-coded data if not found in database
-          const ambassadorData = {
+          const mentorData = {
             id: "1",
             name: "Dr. Ruby Perrin",
             credentials: "PhD in Psychology, Mental Health Specialist",
@@ -162,10 +172,10 @@ const BookingPage = () => {
             bio: "Dr. Ruby Perrin is a highly skilled mental health professional with extensive experience in treating depression and anxiety disorders. She provides a safe and supportive environment for her clients."
           };
           
-          setAmbassador(ambassadorData);
-          setSelectedSpecialty(ambassadorData.specialty.split(" ")[0]);
+          setMentor(mentorData);
+          setSelectedSpecialty(mentorData.specialty.split(" ")[0]);
         } else {
-          setAmbassador(data);
+          setMentor(data);
           if (data.specialty) {
             setSelectedSpecialty(data.specialty);
           }
@@ -173,13 +183,13 @@ const BookingPage = () => {
         
         setLoading(false);
       } catch (error) {
-        console.error("Error fetching ambassador details:", error);
+        errorLog("Error fetching mood mentor details:", error);
         setLoading(false);
       }
     };
     
     checkAuth();
-  }, [ambassadorId, navigate]);
+  }, [mentorId, navigate, isAuthenticated, user]);
   
   // Handle step navigation
   const nextStep = () => {
@@ -230,14 +240,12 @@ const BookingPage = () => {
   
   const handleBookingSubmit = async () => {
     try {
-      // Check if user is authenticated
-      if (!user) {
-        // Store booking data in localStorage
+      if (!isAuthenticated) {
+        // Save current booking data to localStorage for restoration after login
         localStorage.setItem("bookingData", JSON.stringify({
-          ambassadorId,
           specialty: selectedSpecialty,
           appointmentType: selectedAppointmentType,
-          date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
+          date: selectedDate?.toISOString(),
           time: selectedTime,
           formData
         }));
@@ -247,41 +255,60 @@ const BookingPage = () => {
         return;
       }
       
-      if (!ambassadorId || !selectedDate) {
-        toast.error("Missing required booking information");
-        return;
-      }
+      // Format date and time for API
+      const appointmentDateTime = new Date(selectedDate!);
+      const [hours, minutes] = selectedTime.match(/(\d+):(\d+)/)?.slice(1) || [];
+      const isPM = selectedTime.includes('PM');
+      let hour = parseInt(hours);
       
-      // Create the booking entry using the correct field names
-      const bookingData = {
-        user_id: user.id,
-        ambassador_id: ambassadorId,
-        session_date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : new Date().toISOString().split('T')[0],
-        session_time: selectedTime,
+      if (isPM && hour !== 12) hour += 12;
+      if (!isPM && hour === 12) hour = 0;
+      
+      appointmentDateTime.setHours(hour, parseInt(minutes), 0, 0);
+      
+      // Create appointment using the API
+      const appointmentData = {
+        user_id: user?.id,
+        mentor_id: mentor?.id || null,
+        appointment_type: selectedAppointmentType,
+        start_time: appointmentDateTime.toISOString(),
+        specialty: selectedSpecialty,
+        status: 'pending',
         notes: formData.concerns,
-        status: "pending" as const
+        contact_email: formData.email,
+        contact_phone: formData.phone,
+        patient_name: formData.name
       };
       
-      const { data, error } = await supabase
-        .from("bookings")
-        .insert(bookingData)
-        .select();
-        
-      if (error) throw error;
+      const { data, error } = await fetchWithErrorHandling(
+        () => api.post('/api/appointments', {
+          body: JSON.stringify(appointmentData),
+          headers: { 'Content-Type': 'application/json' }
+        }),
+        { defaultErrorMessage: 'Failed to book appointment', showErrorToast: true }
+      );
       
+      if (error) {
+        throw error;
+      }
+      
+      // Show success toast
       toast.success("Appointment booked successfully!");
-      setCurrentStep(6); // Move to confirmation step
-    } catch (error) {
-      console.error("Error booking appointment:", error);
-      toast.error("Failed to book appointment. Please try again.");
+      
+      // Navigate to confirmation step
+      setCurrentStep(6);
+      
+    } catch (error: any) {
+      errorLog('Error booking appointment:', error);
+      toast.error(error.message || "Failed to book your appointment. Please try again.");
     }
   };
 
   const redirectToLogin = () => {
     // Store booking intent and data in localStorage
-    localStorage.setItem("bookingIntent", JSON.stringify({ ambassadorId }));
+    localStorage.setItem("bookingIntent", JSON.stringify({ mentorId }));
     localStorage.setItem("bookingData", JSON.stringify({
-      ambassadorId,
+      mentorId,
       specialty: selectedSpecialty,
       appointmentType: selectedAppointmentType,
       date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
@@ -294,9 +321,9 @@ const BookingPage = () => {
   
   const redirectToSignup = () => {
     // Store booking intent and data in localStorage
-    localStorage.setItem("bookingIntent", JSON.stringify({ ambassadorId }));
+    localStorage.setItem("bookingIntent", JSON.stringify({ mentorId }));
     localStorage.setItem("bookingData", JSON.stringify({
-      ambassadorId,
+      mentorId,
       specialty: selectedSpecialty,
       appointmentType: selectedAppointmentType,
       date: selectedDate ? format(selectedDate, "yyyy-MM-dd") : null,
@@ -319,7 +346,7 @@ const BookingPage = () => {
               <div className="flex justify-center items-center py-12">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
               </div>
-            ) : ambassador ? (
+            ) : mentor ? (
               <Card className="border-2 border-blue-200 overflow-hidden">
                 <div className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-4">
                   <h3 className="text-xl font-semibold">Your Selected Ambassador</h3>
@@ -327,41 +354,41 @@ const BookingPage = () => {
                 <CardContent className="p-6">
                   <div className="flex flex-col md:flex-row gap-6 items-center md:items-start">
                     <Avatar className="h-24 w-24 border-2 border-blue-100">
-                      <AvatarImage src={ambassador.image} alt={ambassador.name} />
-                      <AvatarFallback>{ambassador.name?.split(" ").map((n: string) => n[0]).join("")}</AvatarFallback>
+                      <AvatarImage src={mentor.image} alt={mentor.name} />
+                      <AvatarFallback>{mentor.name?.split(" ").map((n: string) => n[0]).join("")}</AvatarFallback>
                     </Avatar>
                     
                     <div className="flex-1 text-center md:text-left">
-                      <h3 className="text-xl font-bold text-gray-800">{ambassador.name}</h3>
-                      <p className="text-gray-500 text-sm mb-2">{ambassador.credentials}</p>
+                      <h3 className="text-xl font-bold text-gray-800">{mentor.name}</h3>
+                      <p className="text-gray-500 text-sm mb-2">{mentor.credentials}</p>
                       
                       <div className="flex flex-col md:flex-row gap-2 md:gap-4 mb-4 mt-2 items-center md:items-start">
                         <div className="flex items-center text-blue-600">
                           <Award className="w-4 h-4 mr-1" />
-                          <span className="text-sm">{ambassador.specialty}</span>
+                          <span className="text-sm">{mentor.specialty}</span>
                         </div>
-                        {ambassador.location && (
+                        {mentor.location && (
                           <div className="flex items-center text-gray-500">
                             <MapPin className="w-4 h-4 mr-1" />
-                            <span className="text-sm">{ambassador.location}</span>
+                            <span className="text-sm">{mentor.location}</span>
                           </div>
                         )}
                       </div>
                       
                       <div className="bg-blue-50 p-4 rounded-lg mt-4 text-blue-800">
                         <p className="text-sm">
-                          You selected <span className="font-semibold">{ambassador.name}</span>. 
-                          {ambassador.specialty && (
-                            <> They are a specialist in <span className="font-semibold">{ambassador.specialty.replace('Specialist', '').trim()}</span>. 
+                          You selected <span className="font-semibold">{mentor.name}</span>. 
+                          {mentor.specialty && (
+                            <> They are a specialist in <span className="font-semibold">{mentor.specialty.replace('Specialist', '').trim()}</span>. 
                             You can discuss all matters related to their specialty.</>
                           )}
                         </p>
                       </div>
                       
-                      {ambassador.bio && (
+                      {mentor.bio && (
                         <div className="mt-4">
                           <h4 className="font-medium text-gray-700 mb-1">About</h4>
-                          <p className="text-sm text-gray-600">{ambassador.bio}</p>
+                          <p className="text-sm text-gray-600">{mentor.bio}</p>
                         </div>
                       )}
                     </div>
@@ -540,11 +567,11 @@ const BookingPage = () => {
                 <div className="space-y-3">
                   <div className="flex justify-between">
                     <span className="text-gray-600">Mental Health Ambassador:</span>
-                    <span className="font-medium">{ambassador?.name || "Selected Ambassador"}</span>
+                    <span className="font-medium">{mentor?.name || "Selected Ambassador"}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Specialty:</span>
-                    <span className="font-medium">{ambassador?.specialty || selectedSpecialty}</span>
+                    <span className="font-medium">{mentor?.specialty || selectedSpecialty}</span>
                   </div>
                   <div className="flex justify-between">
                     <span className="text-gray-600">Appointment Type:</span>

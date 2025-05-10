@@ -37,8 +37,11 @@ import {
   History,
   PenTool
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api"; 
+import { errorLog, devLog } from "@/utils/environment";
 import { useAuth } from "@/hooks/use-auth";
+import { fetchWithErrorHandling } from "@/utils/error-handling";
+import { notificationService } from "@/lib/notificationService";
 
 interface JournalEntry {
   id: string;
@@ -66,48 +69,79 @@ export default function JournalPage() {
   const [isSavingPlan, setIsSavingPlan] = useState(false);
   const [activeTab, setActiveTab] = useState('entries');
 
-  // Fetch journal entries
-  useEffect(() => {
-    const fetchJournalEntries = async () => {
-      if (!user) return;
-      
-      try {
-        setIsLoading(true);
-        const { data, error } = await supabase
-          .from('journal_entries')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-          
-        if (error) throw error;
-        
-        setJournalEntries(data || []);
-        setFilteredEntries(data || []);
-      } catch (error) {
-        console.error('Error fetching journal entries:', error);
-        toast.error("Failed to load journal entries");
-      } finally {
-        setIsLoading(false);
-      }
-    };
+  // Function to fetch journal entries
+  const fetchJournalEntries = async () => {
+    if (!user) return;
     
+    try {
+      setIsLoading(true);
+      devLog('Fetching journal entries for user:', user.id);
+      
+      const { data, error } = await fetchWithErrorHandling<JournalEntry[]>(
+        () => api.get(`/api/journal-entries?userId=${user.id}`),
+        {
+          defaultErrorMessage: 'Failed to load journal entries',
+          showErrorToast: false
+        }
+      );
+      
+      if (error) {
+        errorLog('Error fetching journal entries:', error);
+        return;
+      }
+      
+      if (data) {
+        devLog('Journal entries fetched:', data.length);
+        setJournalEntries(data);
+        setFilteredEntries(data);
+      }
+    } catch (error) {
+      errorLog('Error fetching journal entries:', error);
+      toast.error("Failed to load journal entries");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Fetch journal entries and subscribe to updates
+  useEffect(() => {
+    if (!user) return;
+    
+    // Initial fetch
     fetchJournalEntries();
     
-    // Set up real-time subscription
-    const subscription = supabase
-      .channel('journal_changes')
-      .on('postgres_changes', 
-        { event: '*', schema: 'public', table: 'journal_entries', filter: `user_id=eq.${user?.id}` }, 
-        () => {
-          fetchJournalEntries();
-        }
-      )
-      .subscribe();
-      
+    // Subscribe to journal entries updates using the notification service
+    const subscriptionId = notificationService.subscribe('journal_entries', user.id, 30000);
+    
+    // Add a listener to update entries when new data is received
+    notificationService.addListener('journal_entries', user.id, (newData) => {
+      devLog('Journal entries updated, refreshing data');
+      if (newData) {
+        setJournalEntries(newData);
+        setFilteredEntries(
+          searchTerm.trim() !== '' 
+            ? newData.filter(filterJournalEntries) 
+            : newData
+        );
+      } else {
+        fetchJournalEntries();
+      }
+    });
+    
     return () => {
-      subscription.unsubscribe();
+      // Clean up subscription and listener when component unmounts
+      notificationService.unsubscribe(subscriptionId);
+      notificationService.removeListener('journal_entries', user.id, fetchJournalEntries);
     };
   }, [user]);
+  
+  // Helper function for filtering entries
+  const filterJournalEntries = (entry: JournalEntry) => {
+    const term = searchTerm.toLowerCase();
+    return entry.title.toLowerCase().includes(term) || 
+           entry.content.toLowerCase().includes(term) ||
+           entry.tags?.some(tag => tag.toLowerCase().includes(term));
+  };
   
   // Filter entries when search term changes
   useEffect(() => {
@@ -116,13 +150,7 @@ export default function JournalPage() {
       return;
     }
     
-    const term = searchTerm.toLowerCase();
-    const filtered = journalEntries.filter(entry => 
-      entry.title.toLowerCase().includes(term) || 
-      entry.content.toLowerCase().includes(term) ||
-      entry.tags?.some(tag => tag.toLowerCase().includes(term))
-    );
-    
+    const filtered = journalEntries.filter(filterJournalEntries);
     setFilteredEntries(filtered);
   }, [searchTerm, journalEntries]);
   
@@ -182,12 +210,20 @@ export default function JournalPage() {
   // Toggle favorite status
   const toggleFavorite = async (entryId: string, currentStatus: boolean) => {
     try {
-      const { error } = await supabase
-        .from('journal_entries')
-        .update({ is_favorite: !currentStatus } as any)
-        .eq('id', entryId);
-        
-      if (error) throw error;
+      devLog(`Toggling favorite status for entry ${entryId} to ${!currentStatus}`);
+      
+      const { error } = await fetchWithErrorHandling(
+        () => api.patch(`/api/journal-entries/${entryId}`, {
+          is_favorite: !currentStatus
+        }),
+        {
+          defaultErrorMessage: 'Failed to update favorite status'
+        }
+      );
+      
+      if (error) {
+        return;
+      }
       
       // Update local state
       setJournalEntries(entries => 
@@ -200,60 +236,85 @@ export default function JournalPage() {
       
       toast.success(currentStatus ? "Removed from favorites" : "Added to favorites");
     } catch (error) {
-      console.error('Error updating journal entry:', error);
-      toast.error("Failed to update journal entry");
+      errorLog('Error toggling favorite status:', error);
+      toast.error("Failed to update favorite status");
     }
   };
   
-  // Delete journal entry
+  // Delete an entry
   const deleteEntry = async (entryId: string) => {
     try {
-      const { error } = await supabase
-        .from('journal_entries')
-        .delete()
-        .eq('id', entryId);
-        
-      if (error) throw error;
+      devLog(`Deleting journal entry: ${entryId}`);
+      
+      const { error } = await fetchWithErrorHandling(
+        () => api.delete(`/api/journal-entries/${entryId}`),
+        {
+          defaultErrorMessage: 'Failed to delete journal entry'
+        }
+      );
+      
+      if (error) {
+        return;
+      }
       
       // Update local state
       setJournalEntries(entries => entries.filter(entry => entry.id !== entryId));
+      setFilteredEntries(entries => entries.filter(entry => entry.id !== entryId));
       setSelectedEntryId(null);
       
       toast.success("Journal entry deleted");
     } catch (error) {
-      console.error('Error deleting journal entry:', error);
+      errorLog('Error deleting journal entry:', error);
       toast.error("Failed to delete journal entry");
     }
   };
   
   // Save tomorrow's plan
   const saveTomorrowsPlan = async () => {
-    if (!user || !journalEntries.length) return;
+    if (!user || !journalEntries.length || !tomorrowsPlan.trim()) return;
     
     try {
       setIsSavingPlan(true);
+      devLog('Saving tomorrow\'s plan');
+      
+      // Get the most recent entry ID
       const mostRecentEntryId = journalEntries[0].id;
       
-      const { error } = await supabase
-        .from('journal_entries')
-        .update({ tomorrows_intention: tomorrowsPlan } as any)
-        .eq('id', mostRecentEntryId);
-        
-      if (error) throw error;
+      const { error } = await fetchWithErrorHandling(
+        () => api.patch(`/api/journal-entries/${mostRecentEntryId}`, {
+          tomorrows_intention: tomorrowsPlan
+        }),
+        {
+          defaultErrorMessage: 'Failed to save your plan',
+          successMessage: 'Tomorrow\'s plan saved'
+        }
+      );
       
-      toast.success("Plan saved successfully");
+      if (error) {
+        return;
+      }
+      
+      // Update local state
+      setJournalEntries(entries => 
+        entries.map(entry => 
+          entry.id === mostRecentEntryId 
+            ? {...entry, tomorrows_intention: tomorrowsPlan}
+            : entry
+        )
+      );
     } catch (error) {
-      console.error('Error saving plan:', error);
+      errorLog('Error saving tomorrow\'s plan:', error);
       toast.error("Failed to save your plan");
     } finally {
       setIsSavingPlan(false);
     }
   };
-
+  
+  // Handle button clicks
   const handleNewEntryClick = () => {
     navigate('/patient-dashboard/journal/new');
   };
-
+  
   const handleViewEntryClick = (entryId: string) => {
     navigate(`/patient-dashboard/journal/${entryId}`);
   };

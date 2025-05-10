@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { format, subDays } from 'date-fns';
@@ -14,6 +13,9 @@ import {
   Calendar,
   BarChart
 } from "lucide-react";
+import { api } from '@/lib/api';
+import { errorLog, devLog } from '@/utils/environment';
+import { fetchWithErrorHandling } from '@/utils/error-handling';
 
 interface MoodEntry {
   id: string;
@@ -33,14 +35,14 @@ interface MoodStats {
 export default function MoodAnalytics() {
   const { user } = useAuth();
   const [moodData, setMoodData] = useState<MoodEntry[]>([]);
-  const [moodStats, setMoodStats] = useState<MoodStats | null>(null);
+  const [moodStats, setMoodStats] = useState<MoodStats>({ averageScore: 0, totalAssessments: 0, mostFrequentMood: 'No data', recentTrend: 'stable' });
   const [isLoading, setIsLoading] = useState(true);
   const [timeRange, setTimeRange] = useState<'week' | 'month' | 'year'>('week');
 
   useEffect(() => {
     const fetchMoodData = async () => {
-      if (!user) return;
-
+      if (!user?.id) return;
+      
       try {
         setIsLoading(true);
         
@@ -52,26 +54,31 @@ export default function MoodAnalytics() {
           ), 
           'yyyy-MM-dd'
         );
+        
+        devLog(`Fetching mood data for user ${user.id} from ${startDate}`);
+        
+        // Fetch mood entries using API client instead of Supabase
+        const { data, error } = await fetchWithErrorHandling<MoodEntry[]>(
+          () => api.get(`/api/mood-entries?user_id=${user.id}&start_date=${startDate}`),
+          { 
+            defaultErrorMessage: 'Failed to fetch mood data',
+            showErrorToast: false
+          }
+        );
 
-        // Fetch mood entries
-        const { data: moodEntries, error } = await supabase
-          .from('mood_entries')
-          .select('*')
-          .eq('user_id', user.id)
-          .gte('created_at', startDate)
-          .order('created_at', { ascending: true });
+        if (error) {
+          throw new Error(`Failed to fetch mood entries: ${error.message}`);
+        }
 
-        if (error) throw error;
-
-        if (moodEntries) {
-          setMoodData(moodEntries);
+        if (data) {
+          setMoodData(data);
           
           // Calculate statistics
-          const stats = calculateMoodStats(moodEntries);
+          const stats = calculateMoodStats(data);
           setMoodStats(stats);
         }
       } catch (error) {
-        console.error('Error fetching mood data:', error);
+        errorLog('Error fetching mood data:', error);
       } finally {
         setIsLoading(false);
       }

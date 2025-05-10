@@ -1,36 +1,48 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import AuthLayout from "../components/AuthLayout";
-import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { Mail } from "lucide-react";
+import { useState } from 'react';
+import { KeyRound } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
+import AuthLayout from '../components/AuthLayout';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function ForgotPassword() {
-  const [email, setEmail] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [email, setEmail] = useState('');
+  const [error, setError] = useState('');
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const { forgotPassword } = useAuth();
+  const navigate = useNavigate();
 
-  const handleResetPassword = async (e: React.FormEvent) => {
+  const validateEmail = (email: string) => {
+    return email.match(/^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$/);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (isLoading) return;
-    
-    setIsLoading(true);
-    
-    try {
-      const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
+    setError('');
 
-      if (error) throw error;
-      
-      setIsSubmitted(true);
-      toast.success("Password reset link sent to your email");
-    } catch (error: any) {
-      console.error('Password reset error:', error);
-      toast.error(error.message || "Failed to send reset link. Please try again.");
+    if (!email) {
+      setError('Email is required');
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      setError('Please enter a valid email address');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const success = await forgotPassword(email);
+      if (success) {
+        setIsSubmitted(true);
+      }
+    } catch (error) {
+      console.error('Error sending reset link:', error);
+      setError('Something went wrong. Please try again later.');
     } finally {
       setIsLoading(false);
     }
@@ -39,57 +51,51 @@ export default function ForgotPassword() {
   return (
     <AuthLayout 
       title="Reset Your Password" 
-      subtitle={
-        isSubmitted 
-          ? "Check your email for a password reset link" 
-          : "Enter your email to receive a password reset link"
-      }
+      subtitle="Enter your email and we'll send you a link to reset your password"
+      icon={<KeyRound className="w-6 h-6" />}
     >
-      {!isSubmitted ? (
-        <form onSubmit={handleResetPassword} className="space-y-4">
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <div className="relative">
-              <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-              <Input
-                id="email"
-                type="email"
-                placeholder="Enter your email"
-                className="pl-10"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
-          </div>
-          <Button 
-            type="submit" 
-            className="w-full mt-6" 
-            disabled={isLoading}
-            variant="brand"
-          >
-            {isLoading ? "Sending..." : "Send Reset Link"}
-          </Button>
-          <p className="text-center text-sm text-gray-600 mt-4">
-            Remember your password?{" "}
-            <Link to="/login" className="text-primary hover:underline">
-              Login
-            </Link>
+      {isSubmitted ? (
+        <div className="text-center py-8 space-y-4">
+          <p className="text-lg font-semibold text-green-600">Password reset link sent!</p>
+          <p className="text-gray-600">
+            We've sent a password reset link to <strong>{email}</strong>. Please check your email
+            and follow the instructions to reset your password.
           </p>
-        </form>
+          <div className="mt-6">
+            <Button onClick={() => navigate('/login')} className="w-full">
+              Return to Login
+            </Button>
+          </div>
+        </div>
       ) : (
-        <div className="space-y-4">
-          <div className="bg-green-50 p-4 rounded-md border border-green-200">
-            <p className="text-green-800 text-sm">
-              We've sent a password reset link to <strong>{email}</strong>. 
-              Please check your inbox and follow the instructions to reset your password.
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="email">Email Address</Label>
+            <Input
+              id="email"
+              type="email"
+              placeholder="Enter your email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              className={error ? "border-red-500" : ""}
+            />
+            {error && <p className="text-red-500 text-sm">{error}</p>}
+          </div>
+          
+          <Button type="submit" className="w-full" disabled={isLoading}>
+            {isLoading ? <Spinner size="sm" className="mr-2" /> : null}
+            Send Reset Link
+          </Button>
+          
+          <div className="text-center mt-4">
+            <p className="text-sm text-gray-600">
+              Remembered your password?{" "}
+              <Link to="/login" className="text-primary font-medium hover:underline">
+                Back to Login
+              </Link>
             </p>
           </div>
-          <Button asChild className="w-full" variant="outline">
-            <Link to="/login">Return to Login</Link>
-          </Button>
-        </div>
+        </form>
       )}
     </AuthLayout>
   );

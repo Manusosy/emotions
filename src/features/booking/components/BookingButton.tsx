@@ -1,48 +1,40 @@
-import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Calendar } from "lucide-react";
+import { useState } from 'react';
+import { Button } from '@/components/ui/button';
+import { BookingModal } from '@/features/mood-mentors/components/BookingModal';
 
 interface BookingButtonProps {
-  ambassadorId: number;
-  className?: string;
+  mentorId: string;
+  mentorName: string;
   buttonText?: string;
-  variant?: "default" | "outline" | "secondary";
-  size?: "default" | "sm" | "lg" | "icon";
-  showIcon?: boolean;
-  disabled?: boolean;
+  className?: string;
+  variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
 }
 
-const BookingButton = ({ 
-  ambassadorId, 
-  className = "",
-  buttonText = "Book Now",
-  variant = "default",
-  size = "default",
-  showIcon = true,
-  disabled = false
-}: BookingButtonProps) => {
-  const navigate = useNavigate();
-
-  const handleBookNow = () => {
-    if (disabled) return;
-    // Immediately redirect to booking page
-    navigate(`/booking?ambassadorId=${ambassadorId}`);
-  };
+export default function BookingButton({
+  mentorId,
+  mentorName,
+  buttonText = 'Book Session',
+  className,
+  variant = 'default'
+}: BookingButtonProps) {
+  const [isModalOpen, setIsModalOpen] = useState(false);
 
   return (
-    <Button 
-      onClick={handleBookNow}
-      variant={variant}
-      size={size}
-      disabled={disabled}
-      className={`${variant === "default" ? "bg-[#007BFF] hover:bg-blue-600" : ""} 
-                 ${disabled ? "opacity-50 cursor-not-allowed" : ""} 
-                 ${className}`}
-    >
-      {showIcon && <Calendar className={`w-4 h-4 ${buttonText ? "mr-2" : ""}`} />}
-      {buttonText && <span>{buttonText}</span>}
-    </Button>
-  );
-};
+    <>
+      <Button
+        onClick={() => setIsModalOpen(true)}
+        className={className}
+        variant={variant}
+      >
+        {buttonText}
+      </Button>
 
-export default BookingButton;
+      <BookingModal
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        ambassadorId={mentorId}
+        ambassadorName={mentorName}
+      />
+    </>
+  );
+}

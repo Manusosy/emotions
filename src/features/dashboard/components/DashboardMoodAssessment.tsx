@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Book, Heart, FileText, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
+import { errorLog, devLog } from "@/utils/environment";
 import { toast } from "sonner";
 
 // Import the EmotionButton and QuestionCard components
@@ -147,7 +148,7 @@ const DashboardMoodAssessment = () => {
     const saveMoodEntry = async () => {
       if (isAuthenticated && user && showResults && !resultSaved) {
         try {
-          console.log("Attempting to save mood entry...", { 
+          devLog("Attempting to save mood entry...", { 
             userId: user.id, 
             emotion: selectedEmotion, 
             score: score 
@@ -162,25 +163,23 @@ const DashboardMoodAssessment = () => {
           
           while (retryCount < 3 && !saveSuccessful) {
             try {
-              const { data, error } = await supabase
-                .from("mood_entries")
-                .insert({
-                  user_id: user.id,
-                  mood_score: moodScore,
-                  assessment_result: moodResult,
-                  notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-                })
-                .select();
+              const response = await api.post("/api/mood-entries", {
+                user_id: user.id,
+                mood_score: moodScore,
+                assessment_result: moodResult,
+                notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
+              });
               
-              if (error) {
-                console.error(`Error saving mood entry (attempt ${retryCount + 1}):`, error);
-                throw error;
+              if (!response.ok) {
+                throw new Error(`Failed to save mood entry: ${response.statusText}`);
               }
               
-              console.log("Mood entry saved successfully:", data);
+              const data = await response.json();
+              devLog("Mood entry saved successfully:", data);
               saveSuccessful = true;
             } catch (innerError) {
               retryCount++;
+              errorLog(`Error saving mood entry (attempt ${retryCount}):`, innerError);
               if (retryCount >= 3) throw innerError;
               // Wait before retry
               await new Promise(resolve => setTimeout(resolve, 1000));
@@ -190,7 +189,7 @@ const DashboardMoodAssessment = () => {
           setResultSaved(true);
           toast.success("Mood assessment saved");
         } catch (error) {
-          console.error("Error saving mood entry:", error);
+          errorLog("Error saving mood entry:", error);
           toast.error("Failed to save assessment. Please try again.");
         }
       }
@@ -200,21 +199,20 @@ const DashboardMoodAssessment = () => {
   }, [showResults, isAuthenticated, user, selectedEmotion, score, resultSaved]);
 
   const handleEmotionSelect = (emotion: string) => {
-    if (selectedEmotion === emotion) {
-      setShowQuestions(true);
-    } else {
-      setSelectedEmotion(emotion);
-    }
+    setSelectedEmotion(emotion);
+    setShowQuestions(true);
+    devLog(`Selected emotion: ${emotion}`);
   };
 
   const handleClickOutside = () => {
-    setSelectedEmotion(null);
+    // Do nothing for now
   };
 
   const handleAnswerSelect = (points: number) => {
-    setScore(prev => prev + points);
+    setScore(score + points);
+    
     if (currentQuestion < questions.length - 1) {
-      setCurrentQuestion(prev => prev + 1);
+      setCurrentQuestion(currentQuestion + 1);
     } else {
       setShowResults(true);
     }
@@ -229,21 +227,20 @@ const DashboardMoodAssessment = () => {
     setResultSaved(false);
   };
 
-  // Dashboard-specific navigation functions
   const navigateToJournal = () => {
-    navigate("/patient-dashboard/journal");
+    navigate('/patient-dashboard/journal');
   };
 
   const navigateToResources = () => {
-    navigate("/patient-dashboard/resources");
+    navigate('/resources');
   };
 
   const navigateToAmbassadors = () => {
-    navigate("/ambassadors");
+    navigate('/patient-dashboard/mood-mentors');
   };
 
   const navigateToHelpGroups = () => {
-    navigate("/help-groups");
+    navigate('/community');
   };
 
   return (

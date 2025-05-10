@@ -27,13 +27,12 @@ import {
   RefreshCw,
   CheckCircle2
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { format, addDays, parse, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays, subMonths } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Appointment } from "@/types/database.types";
+import { Appointment } from "@/lib/appointmentService";
 import {
   Popover,
   PopoverContent,
@@ -47,7 +46,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { Spinner } from "@/components/ui/spinner";
-import { appointmentService } from "@/integrations/supabase/services/appointment.service";
+import { appointmentService } from "@/lib/appointmentService";
+import { api } from "@/lib/api";
+import { errorLog, devLog } from "@/utils/environment";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -59,7 +60,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Textarea } from "@/components/ui/textarea";
-import { ambassadorService } from "@/integrations/supabase/services/ambassador.service";
+import { moodMentorService } from "@/lib/moodMentorService";
 
 // Replace hardcoded ambassador profiles with a type
 interface AmbassadorProfile {
@@ -139,6 +140,7 @@ export default function AppointmentsPage() {
     if (newCount === 5) {
       localStorage.setItem('debug_mode', 'true');
       toast.success('Debug mode enabled');
+      devLog('Debug mode enabled');
     }
   };
   
@@ -213,13 +215,16 @@ export default function AppointmentsPage() {
         return;
       }
       
-      const { data, error } = await supabase
-        .from("appointments")
-        .select("*")
-        .eq("patient_id", user.id)
-        .order("date", { ascending: true });
+      devLog(`Fetching ${activeTab} appointments from ${format(startDate, 'yyyy-MM-dd')} to ${format(endDate, 'yyyy-MM-dd')}`);
+      
+      const { data, error } = await appointmentService.getPatientAppointments(
+        user.id,
+        activeTab,
+        startDate,
+        endDate
+      );
 
-      if (error) throw error;
+      if (error) throw new Error(error);
 
       // Convert database appointments to our Appointment interface and add mock doctor data
       const mappedAppointments: AppointmentWithDoctor[] = data.map(appt => {
@@ -228,15 +233,7 @@ export default function AppointmentsPage() {
           doctorProfiles[Math.floor(Math.random() * doctorProfiles.length)];
         
         return {
-          id: appt.id,
-          date: appt.date,
-          time: appt.time,
-          type: appt.type || (Math.random() > 0.5 ? "video" : "audio"),
-          status: appt.status || (Math.random() > 0.7 ? "completed" : Math.random() > 0.5 ? "cancelled" : "upcoming"),
-          patient_id: appt.patient_id,
-          ambassador_id: appt.ambassador_id,
-          notes: appt.notes,
-          duration: appt.duration || "30 minutes",
+          ...appt,
           doctor: {
             id: appt.ambassador_id || doctorProfile.id,
             name: doctorProfile.name,
@@ -248,87 +245,18 @@ export default function AppointmentsPage() {
         };
       });
 
-      // Only add mock data if enabled (for development only)
-      const shouldAddMockData = false;
-      if (shouldAddMockData && mappedAppointments.length < 3) {
-        const mockAppointments: AppointmentWithDoctor[] = [
-          {
-            id: "apt0001",
-            date: "2024-11-11",
-            time: "10:45 AM",
-            type: "video",
-            status: "upcoming",
-            patient_id: user.id,
-            ambassador_id: "amb-123",
-            notes: null,
-            duration: "30 minutes",
-            doctor: {
-              id: "amb-123",
-              name: doctorProfiles[0].name,
-              specialty: doctorProfiles[0].specialty,
-              avatar: doctorProfiles[0].avatar,
-              email: doctorProfiles[0].email,
-              phone: doctorProfiles[0].phone
-            }
-          },
-          {
-            id: "apt0002",
-            date: "2024-11-05",
-            time: "11:50 AM",
-            type: "audio",
-            status: "upcoming",
-            patient_id: user.id,
-            ambassador_id: "amb-456",
-            notes: null,
-            duration: "45 minutes",
-            doctor: {
-              id: "amb-456",
-              name: doctorProfiles[1].name,
-              specialty: doctorProfiles[1].specialty,
-              avatar: doctorProfiles[1].avatar,
-              email: doctorProfiles[1].email,
-              phone: doctorProfiles[1].phone
-            }
-          },
-          {
-            id: "apt0003",
-            date: "2024-10-27",
-            time: "09:30 AM",
-            type: "video",
-            status: "upcoming",
-            patient_id: user.id,
-            ambassador_id: "amb-789",
-            notes: null,
-            duration: "30 minutes",
-            doctor: {
-              id: "amb-789",
-              name: doctorProfiles[2].name,
-              specialty: doctorProfiles[2].specialty,
-              avatar: doctorProfiles[2].avatar,
-              email: doctorProfiles[2].email,
-              phone: doctorProfiles[2].phone
-            }
-          }
-        ];
-        
-        mappedAppointments.push(...mockAppointments);
-      }
-
-      const filteredData = mappedAppointments.filter((appointment) => {
-        return appointment.status === activeTab;
-      });
-
-      setAppointments(filteredData);
+      setAppointments(mappedAppointments);
       
-      // Update counts with actual numbers
-      setCounts({
-        upcoming: mappedAppointments.filter(a => a.status === "upcoming").length,
-        cancelled: mappedAppointments.filter(a => a.status === "cancelled").length,
-        completed: mappedAppointments.filter(a => a.status === "completed").length
-      });
+      // Update counts
+      const counts = {
+        upcoming: mappedAppointments.filter(a => a.status === 'upcoming').length,
+        completed: mappedAppointments.filter(a => a.status === 'completed').length,
+        cancelled: mappedAppointments.filter(a => a.status === 'cancelled').length
+      };
+      setCounts(counts);
     } catch (error) {
-      toast.error("Failed to fetch appointments");
-      console.error("Error:", error);
+      errorLog('Error fetching appointments:', error);
+      toast.error('Failed to load appointments');
     } finally {
       setLoading(false);
     }
@@ -337,64 +265,31 @@ export default function AppointmentsPage() {
   const fetchAmbassadors = async () => {
     try {
       setLoadingAmbassadors(true);
+      devLog('Fetching mood mentors');
       
-      console.log("Fetching ambassadors from service...");
-      const { data, success, error } = await ambassadorService.getAvailableAmbassadors();
+      const { data, error } = await moodMentorService.getMentorProfiles();
       
-      if (error) {
-        console.error("Error details:", error);
-        throw new Error(error.message || "Failed to fetch ambassadors");
-      }
+      if (error) throw new Error(error);
       
-      if (!success || !data || data.length === 0) {
-        console.log("No ambassador data returned, using fallback data");
-        // Use doctor profiles as fallback if no ambassadors are found
-        const fallbackAmbassadors = doctorProfiles.map(profile => ({
-          id: profile.id,
-          name: profile.name,
-          specialty: profile.specialty,
-          avatar: profile.avatar,
-          rating: 4.5,
-          reviews: 15,
-          available: true,
-          email: profile.email,
-          phone: profile.phone
-        }));
-        
-        setAmbassadors(fallbackAmbassadors);
-      } else {
-        console.log(`Setting ${data.length} ambassadors from API`);
-        
-        // Sort ambassadors to show available ones first
-        const sortedAmbassadors = [...data].sort((a, b) => {
-          // First sort by availability
-          if (a.available && !b.available) return -1;
-          if (!a.available && b.available) return 1;
-          
-          // Then sort by rating
-          return (b.rating || 0) - (a.rating || 0);
-        });
-        
-        setAmbassadors(sortedAmbassadors);
-      }
-    } catch (error) {
-      console.error("Error fetching ambassadors:", error);
-      
-      // Provide fallback data instead of showing an error
-      const fallbackAmbassadors = doctorProfiles.map(profile => ({
-        id: profile.id,
-        name: profile.name,
-        specialty: profile.specialty,
-        avatar: profile.avatar,
-        rating: 4.5,
-        reviews: 15,
-        available: true,
-        email: profile.email,
-        phone: profile.phone
+      const ambassadorProfiles: AmbassadorProfile[] = data.map(mentor => ({
+        id: mentor.id,
+        name: mentor.full_name,
+        specialty: mentor.specialty || 'General Mental Health',
+        avatar: mentor.avatar_url || '/assets/default-avatar.png',
+        rating: 4.5, // TODO: Implement ratings
+        reviews: 10, // TODO: Implement reviews
+        available: mentor.availability_status === 'available',
+        nextAvailable: 'Tomorrow, 10:00 AM', // TODO: Implement availability scheduling
+        email: mentor.email,
+        phone: mentor.phone_number,
+        bio: mentor.bio,
+        education: mentor.education?.[0]?.university
       }));
       
-      setAmbassadors(fallbackAmbassadors);
-      toast.error("Using demo ambassador data. Live data unavailable.");
+      setAmbassadors(ambassadorProfiles);
+    } catch (error) {
+      errorLog('Error fetching ambassadors:', error);
+      toast.error('Failed to load available ambassadors');
     } finally {
       setLoadingAmbassadors(false);
     }
@@ -435,24 +330,23 @@ export default function AppointmentsPage() {
 
   const handleCancelAppointment = async (appointmentId: string) => {
     try {
-      const result = await appointmentService.updateAppointmentStatus(
-        appointmentId, 
-        'cancelled',
-        cancellationReason || 'Cancelled by patient'
-      );
+      devLog(`Cancelling appointment: ${appointmentId}`);
       
-      if (result.success) {
-        toast.success("Appointment cancelled successfully");
-        fetchAppointments(); // Refresh appointments after cancellation
-      } else {
-        toast.error("Failed to cancel appointment");
-      }
-    } catch (error) {
-      toast.error("An error occurred while cancelling the appointment");
-      console.error("Error:", error);
-    } finally {
+      const { data, error } = await appointmentService.updateAppointmentStatus(
+        appointmentId,
+        'cancelled',
+        cancellationReason
+      );
+
+      if (error) throw new Error(error);
+
+      toast.success('Appointment cancelled successfully');
       setCancelAppointmentId(null);
-      setCancellationReason(''); // Reset the reason
+      setCancellationReason('');
+      fetchAppointments();
+    } catch (error) {
+      errorLog('Error cancelling appointment:', error);
+      toast.error('Failed to cancel appointment');
     }
   };
 
@@ -811,129 +705,63 @@ export default function AppointmentsPage() {
 
   // Debug component only shown to admin users for troubleshooting
   const DebugSection = () => {
-    const isAdmin = user?.email?.includes('admin') || localStorage.getItem('debug_mode') === 'true';
-    const [showSection, setShowSection] = useState(false);
-    const [userIdToSet, setUserIdToSet] = useState(user?.id || '');
-    const [debugStatus, setDebugStatus] = useState('');
-
-    if (!isAdmin) return null;
-
     const runDiagnostics = async () => {
-      setDebugStatus('Running diagnostics...');
       try {
-        // Check profiles table
-        const { data: profiles, error: profilesError } = await supabase
-          .from('profiles')
-          .select('*')
-          .limit(5);
-          
-        if (profilesError) {
-          setDebugStatus(`Error querying profiles: ${profilesError.message}`);
-          return;
+        devLog('Running diagnostics...');
+        
+        // Check API connection
+        const healthResponse = await api.get('/api/health');
+        if (!healthResponse.ok) {
+          throw new Error(`API health check failed: ${healthResponse.statusText}`);
+        }
+        const healthData = await healthResponse.json();
+        devLog('API Health Check:', healthData);
+        
+        // Check auth status
+        devLog('Current User:', user);
+        
+        // Check appointments data
+        const { data: appointments, error } = await appointmentService.getPatientAppointments(user?.id || '');
+        devLog('Appointments Data:', appointments);
+        if (error) {
+          devLog('Appointments Error:', error);
         }
         
-        // Check if current user has a profile
-        const myProfile = profiles?.find(p => p.user_id === user?.id);
-        const profileInfo = myProfile 
-          ? `Found your profile with role: ${myProfile.role || 'undefined'}`
-          : 'You don\'t have a profile yet';
-          
-        // Check for ambassadors
-        const ambassadors = profiles?.filter(p => 
-          p.role === 'ambassador' || 
-          p.user_role === 'ambassador' || 
-          (Array.isArray(p.role) && p.role.includes('ambassador'))
-        );
-        
-        const ambassadorInfo = ambassadors?.length 
-          ? `Found ${ambassadors.length} ambassador(s) in profiles table`
-          : 'No ambassadors found in profiles table';
-          
-        setDebugStatus(`Diagnostics complete. ${profileInfo}. ${ambassadorInfo}.`);
+        toast.success('Diagnostics complete. Check dev console for details.');
       } catch (error) {
-        setDebugStatus(`Error running diagnostics: ${error.message}`);
+        errorLog('Diagnostics failed:', error);
+        toast.error('Diagnostics failed');
       }
     };
 
     const setAmbassadorRole = async () => {
-      if (!userIdToSet) {
-        setDebugStatus('Please enter a user ID');
-        return;
-      }
-      
-      setDebugStatus(`Setting user ${userIdToSet} as ambassador...`);
       try {
-        const result = await ambassadorService.setUserAsAmbassador(userIdToSet);
+        devLog('Setting user role to Mood Mentor');
         
-        if (result.success) {
-          setDebugStatus(`Successfully set user ${userIdToSet} as ambassador`);
-          // Refresh ambassador list
-          fetchAmbassadors();
-        } else {
-          setDebugStatus(`Error: ${result.error.message}`);
-        }
+        const { data, error } = await moodMentorService.updateMentorProfile(user?.id || '', {
+          role: 'mood_mentor' // Use the standardized role name
+        });
+        
+        if (error) throw new Error(error);
+        
+        toast.success('Role updated to Mood Mentor');
       } catch (error) {
-        setDebugStatus(`Error: ${error.message}`);
+        errorLog('Error updating role:', error);
+        toast.error('Failed to update role');
       }
     };
 
     return (
-      <div className="mt-10 pt-6 border-t border-gray-200">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-semibold text-gray-700">Admin Diagnostics</h3>
-          <Button 
-            variant="outline" 
-            size="sm"
-            onClick={() => setShowSection(!showSection)}
-          >
-            {showSection ? 'Hide' : 'Show'} Tools
+      <div className="mt-8 p-4 border rounded-lg bg-gray-50">
+        <h3 className="text-lg font-semibold mb-4">Debug Tools</h3>
+        <div className="space-y-4">
+          <Button onClick={runDiagnostics} variant="outline" className="w-full">
+            Run Diagnostics
+          </Button>
+          <Button onClick={setAmbassadorRole} variant="outline" className="w-full">
+            Set as Ambassador
           </Button>
         </div>
-        
-        {showSection && (
-          <div className="bg-gray-50 p-4 rounded-lg">
-            <div className="mb-4">
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={runDiagnostics}
-                className="mr-2"
-              >
-                Run Diagnostics
-              </Button>
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={fetchAmbassadors}
-              >
-                Refresh Ambassador List
-              </Button>
-            </div>
-            
-            <div className="flex items-center mt-4 mb-2 gap-2">
-              <input
-                type="text"
-                value={userIdToSet}
-                onChange={(e) => setUserIdToSet(e.target.value)}
-                placeholder="Enter user ID"
-                className="px-3 py-2 border border-gray-300 rounded-md flex-1"
-              />
-              <Button 
-                variant="outline" 
-                size="sm"
-                onClick={setAmbassadorRole}
-              >
-                Set As Ambassador
-              </Button>
-            </div>
-            
-            {debugStatus && (
-              <div className="mt-4 p-3 bg-gray-100 rounded text-sm font-mono whitespace-pre-wrap">
-                {debugStatus}
-              </div>
-            )}
-          </div>
-        )}
       </div>
     );
   };

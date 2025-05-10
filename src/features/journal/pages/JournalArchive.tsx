@@ -3,7 +3,6 @@ import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Search, Calendar, Tag, Filter, SlidersHorizontal } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { format } from "date-fns";
@@ -16,6 +15,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import DashboardLayout from "@/features/dashboard/components/DashboardLayout";
+import { api } from '@/lib/api';
+import { useAuth } from '@/hooks/use-auth';
+import { fetchWithErrorHandling } from '@/utils/error-handling';
+import { errorLog, devLog } from '@/utils/environment';
 
 interface JournalEntry {
   id: string;
@@ -31,6 +34,7 @@ interface JournalEntry {
 
 export default function JournalArchive() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [entries, setEntries] = useState<JournalEntry[]>([]);
   const [filteredEntries, setFilteredEntries] = useState<JournalEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -99,8 +103,7 @@ export default function JournalArchive() {
         setIsLoading(true);
         setError(null);
 
-        const { data: userData } = await supabase.auth.getUser();
-        if (!userData.user) {
+        if (!user) {
           // If not authenticated, use mock data for demo
           setEntries(mockEntries);
           setFilteredEntries(mockEntries);
@@ -108,24 +111,33 @@ export default function JournalArchive() {
           return;
         }
 
-        const { data, error } = await supabase
-          .from("journal_entries")
-          .select("*")
-          .eq("user_id", userData.user.id)
-          .order("created_at", { ascending: false });
+        // Use the API client instead of Supabase
+        const { data, error } = await fetchWithErrorHandling<JournalEntry[]>(
+          () => api.get(`/api/journal-entries?user_id=${user.id}&order=created_at.desc`),
+          {
+            defaultErrorMessage: 'Failed to load journal entries',
+            showErrorToast: true
+          }
+        );
 
-        if (error) throw error;
-
-        if (data && data.length > 0) {
-          setEntries(data as JournalEntry[]);
-          setFilteredEntries(data as JournalEntry[]);
+        if (error) {
+          errorLog('Error fetching journal entries:', error);
+          setError(error.message || 'Failed to load journal entries');
+          
+          // Fallback to mock data
+          setEntries(mockEntries);
+          setFilteredEntries(mockEntries);
+        } else if (data && data.length > 0) {
+          setEntries(data);
+          setFilteredEntries(data);
         } else {
           // Use mock data if no entries found
+          devLog('No journal entries found, using mock data');
           setEntries(mockEntries);
           setFilteredEntries(mockEntries);
         }
       } catch (err: any) {
-        console.error("Error fetching journal entries:", err);
+        errorLog('Error fetching journal entries:', err);
         setError(err.message || "Failed to load journal entries");
         
         // Fallback to mock data
@@ -137,7 +149,7 @@ export default function JournalArchive() {
     };
 
     fetchEntries();
-  }, []);
+  }, [user]);
 
   // Apply filters whenever filter criteria change
   useEffect(() => {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { ArrowRight, Book, Heart, LifeBuoy, FileText, Users } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import { toast } from "sonner";
 
 // Emotion data
@@ -152,16 +152,15 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
           const moodScore = getMoodScore(selectedEmotion, score);
           const moodResult = getMoodResult(selectedEmotion);
           
-          const { error } = await supabase
-            .from("mood_entries")
-            .insert({
-              user_id: user.id,
-              mood_score: moodScore,
-              assessment_result: moodResult,
-              notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-            });
+          const response = await api.post("/api/mood-entries", {
+            mood_score: moodScore,
+            assessment_result: moodResult,
+            notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
+          });
 
-          if (error) throw error;
+          if (!response.ok) {
+            throw new Error("Failed to save mood entry");
+          }
           
           setResultSaved(true);
           // Don't show a toast notification to avoid disrupting the experience
@@ -213,8 +212,8 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
     navigate("/resources");
   };
 
-  const navigateToAmbassadors = () => {
-    navigate("/ambassadors");
+  const navigateToMoodMentors = () => {
+    navigate("/mood-mentors");
   };
 
   const navigateToHelpGroups = () => {
@@ -362,7 +361,7 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
                             </div>
                             
                             <p className="text-gray-700">
-                              It's important to address these feelings. Consider connecting with a mental health ambassador, joining support groups, or using our journaling tool to process your emotions.
+                              It's important to address these feelings. Consider connecting with a mental health mood mentor, joining support groups, or using our journaling tool to process your emotions.
                             </p>
                             
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
@@ -371,17 +370,16 @@ const MoodAssessment = ({ emotionsRef }: MoodAssessmentProps) => {
                                   <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-3">
                                     <Users className="h-5 w-5 text-[#20C0F3]" />
                                   </div>
-                                  <h3 className="font-semibold text-gray-800">Talk to a Mental Health Ambassador</h3>
+                                  <h3 className="font-semibold text-gray-800">Talk to a Mental Health Mood Mentor</h3>
                                 </div>
                                 <p className="text-gray-600 text-sm mb-4">
-                                  Connect with a trusted mental health ambassador for personalized support.
+                                  Connect with a trusted mental health mood mentor for personalized support.
                                 </p>
-                                <Button 
-                                  onClick={navigateToAmbassadors} 
-                                  className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white shadow-md hover:shadow-lg transition-all"
+                                <Button
+                                  onClick={navigateToMoodMentors}
+                                  className="w-full bg-[#007BFF] hover:bg-blue-600"
                                 >
-                                  Find an Ambassador
-                                  <ArrowRight className="ml-2 h-4 w-4" />
+                                  Find a Mood Mentor
                                 </Button>
                               </div>
                               

@@ -81,11 +81,11 @@ const Footer = () => {
                 Resources
               </a>
               <a 
-                href="/ambassadors" 
-                onClick={(e) => handleNavigation("/ambassadors", e)}
+                href="/mood-mentors" 
+                onClick={(e) => handleNavigation("/mood-mentors", e)}
                 className="text-gray-700 hover:text-blue-600 text-base"
               >
-                Ambassadors
+                Mood Mentors
               </a>
             </div>
           </div>

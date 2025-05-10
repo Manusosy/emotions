@@ -1,12 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import React, { useState, useEffect, useRef } from "react";
+import { useNavigate, Link, useLocation } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { useIsMobile } from "@/hooks/use-is-mobile";
 import { useAuth } from "@/hooks/use-auth";
-import WelcomeDialog from "@/components/WelcomeDialog";
 import {
   Dialog,
   DialogContent,
@@ -23,7 +21,7 @@ import {
   LogOut,
   Menu,
   X,
-  Inbox,
+  MessageSquare,
   FileText,
   Users,
   Bell,
@@ -35,11 +33,22 @@ import {
   BadgeHelp,
   ChevronRight,
   Clock3,
-  HeartPulse,
   Search,
   Trash2,
-  MessageSquare,
-  ShieldAlert
+  Sparkles,
+  BarChart2,
+  UserCheck,
+  Briefcase,
+  Brain,
+  UserCog,
+  Award,
+  PlayCircle,
+  Zap,
+  ChevronLeft,
+  Star,
+  Info,
+  HeartPulse,
+  LayoutDashboard
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -56,6 +65,17 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+} from "@/components/ui/command";
+import { cn } from "@/lib/utils";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -67,17 +87,8 @@ interface Notification {
   content: string;
   created_at: string;
   read: boolean;
-  type: 'welcome' | 'update' | 'reminder' | 'other';
+  type: 'appointment' | 'message' | 'journal' | 'mood' | 'other';
   user_id?: string;
-}
-
-interface DbNotification {
-  id: string;
-  title: string;
-  message: string;
-  created_at: string;
-  read: boolean;
-  user_id: string;
 }
 
 interface SearchResult {
@@ -89,137 +100,36 @@ interface SearchResult {
 }
 
 const patientNavigation = [
-  { 
+  {
     section: "Main",
     items: [
-      { name: "Overview", href: "/patient-dashboard", icon: Home },
+      { name: "Dashboard", href: "/patient-dashboard", icon: LayoutDashboard },
       { name: "Appointments", href: "/patient-dashboard/appointments", icon: Calendar },
-      { name: "Messages", href: "/patient-dashboard/messages", icon: Inbox },
-      { name: "Notifications", href: "/patient-dashboard/notifications", icon: Bell },
-      { name: "Journal", href: "/patient-dashboard/journal", icon: BookOpen },
+      { name: "Mood Tracker", href: "/patient-dashboard/mood-tracker", icon: Activity },
+      { name: "Journal", href: "/patient-dashboard/journal", icon: FileText },
+      { name: "Messages", href: "/patient-dashboard/messages", icon: MessageSquare },
     ]
   },
   {
-    section: "Wellbeing",
+    section: "Resources",
     items: [
-      { name: "Mood Tracker", href: "/patient-dashboard/mood-tracker", icon: Activity },
-      { name: "Reports", href: "/patient-dashboard/reports", icon: FileText }, 
       { name: "Resources", href: "/patient-dashboard/resources", icon: BookOpen },
+      { name: "Favorites", href: "/patient-dashboard/favorites", icon: Heart },
+      { name: "Reports", href: "/patient-dashboard/reports", icon: BarChart2 },
     ]
   },
   {
     section: "Account",
     items: [
       { name: "Profile", href: "/patient-dashboard/profile", icon: User },
-      { name: "Favorites", href: "/patient-dashboard/favorites", icon: Heart },
+      { name: "Notifications", href: "/patient-dashboard/notifications", icon: Bell },
       { name: "Settings", href: "/patient-dashboard/settings", icon: Settings },
       { name: "Help Center", href: "/patient-dashboard/help", icon: BadgeHelp },
     ]
   }
 ];
 
-const searchableItems: SearchResult[] = [
-  // Overview
-  {
-    title: "Dashboard Overview",
-    description: "View your dashboard summary and upcoming activities",
-    icon: Home,
-    href: "/patient-dashboard",
-    category: "Pages"
-  },
-  // Appointments
-  {
-    title: "Appointments",
-    description: "View and manage your therapy appointments",
-    icon: Calendar,
-    href: "/patient-dashboard/appointments",
-    category: "Pages"
-  },
-  {
-    title: "Schedule Session",
-    description: "Book a new therapy session",
-    icon: Clock,
-    href: "/patient-dashboard/appointments/schedule",
-    category: "Appointments"
-  },
-  // Messages
-  {
-    title: "Messages",
-    description: "Chat with your therapist and support team",
-    icon: Inbox,
-    href: "/patient-dashboard/messages",
-    category: "Communication"
-  },
-  // Journal
-  {
-    title: "Journal",
-    description: "Write and manage your therapy journal entries",
-    icon: BookOpen,
-    href: "/patient-dashboard/journal",
-    category: "Wellbeing"
-  },
-  {
-    title: "New Journal Entry",
-    description: "Create a new journal entry",
-    icon: FileText,
-    href: "/patient-dashboard/journal/new",
-    category: "Wellbeing"
-  },
-  // Mood Tracking
-  {
-    title: "Mood Tracker",
-    description: "Track and analyze your daily mood patterns",
-    icon: Activity,
-    href: "/patient-dashboard/mood-tracker",
-    category: "Wellbeing"
-  },
-  {
-    title: "Mood Reports",
-    description: "View your mood tracking history and insights",
-    icon: FileText,
-    href: "/patient-dashboard/reports",
-    category: "Wellbeing"
-  },
-  // Resources
-  {
-    title: "Resource Library",
-    description: "Access therapeutic resources and materials",
-    icon: BookOpen,
-    href: "/patient-dashboard/resources",
-    category: "Support"
-  },
-  // Profile & Settings
-  {
-    title: "My Profile",
-    description: "View and update your profile information",
-    icon: User,
-    href: "/patient-dashboard/profile",
-    category: "Account"
-  },
-  {
-    title: "Favorite Items",
-    description: "Access your saved resources and content",
-    icon: Heart,
-    href: "/patient-dashboard/favorites",
-    category: "Account"
-  },
-  {
-    title: "Account Settings",
-    description: "Manage your account preferences",
-    icon: Settings,
-    href: "/patient-dashboard/settings",
-    category: "Account"
-  },
-  {
-    title: "Help Center",
-    description: "Get help and support",
-    icon: BadgeHelp,
-    href: "/patient-dashboard/help",
-    category: "Support"
-  }
-];
-
-export default function DashboardLayout({ children }: DashboardLayoutProps) {
+const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const { user, signout, isAuthenticated } = useAuth();
@@ -235,182 +145,167 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   // State for notification dialog
   const [selectedNotification, setSelectedNotification] = useState<Notification | null>(null);
   const [notificationDialogOpen, setNotificationDialogOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const location = useLocation();
+
+  // Add state for search dropdown
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const searchRef = useRef<HTMLDivElement>(null);
 
-  // Check if user is admin
-  const isAdmin = user?.user_metadata?.role === 'admin';
-  
-  // Create dynamic navigation based on user role
-  const navigationWithAdminLink = useMemo(() => {
-    // Deep copy the patient navigation
-    const navigation = JSON.parse(JSON.stringify(patientNavigation));
-    
-    // Add admin link for admin users
-    if (isAdmin) {
-      // Find the Account section
-      const accountSection = navigation.find((section: any) => section.section === "Account");
-      if (accountSection) {
-        // Add Admin Panel link before Help Center
-        const helpCenterIndex = accountSection.items.findIndex((item: any) => item.name === "Help Center");
-        const adminLink = { 
-          name: "Admin Panel", 
-          href: "/admin", 
-          icon: ShieldAlert
-        };
-        
-        if (helpCenterIndex !== -1) {
-          accountSection.items.splice(helpCenterIndex, 0, adminLink);
-        } else {
-          accountSection.items.push(adminLink);
-        }
-      }
+  // Define search categories and items
+  const searchableItems: SearchResult[] = [
+    // Dashboard
+    {
+      title: "Dashboard",
+      description: "View your dashboard summary and key metrics",
+      icon: LayoutDashboard,
+      href: "/patient-dashboard",
+      category: "Pages"
+    },
+    // Appointments
+    {
+      title: "Appointments",
+      description: "Manage your upcoming and past appointments",
+      icon: Calendar,
+      href: "/patient-dashboard/appointments",
+      category: "Pages"
+    },
+    // Mood Tracker
+    {
+      title: "Mood Tracker",
+      description: "Track and monitor your mood over time",
+      icon: Activity,
+      href: "/patient-dashboard/mood-tracker",
+      category: "Pages"
+    },
+    // Journal
+    {
+      title: "Journal",
+      description: "Record your thoughts and feelings",
+      icon: FileText,
+      href: "/patient-dashboard/journal",
+      category: "Pages"
+    },
+    // Create Journal Entry
+    {
+      title: "Create Journal Entry",
+      description: "Write a new journal entry",
+      icon: FileText,
+      href: "/patient-dashboard/journal/new",
+      category: "Journal"
+    },
+    // Messages
+    {
+      title: "Messages",
+      description: "Chat with your mood mentor",
+      icon: MessageSquare,
+      href: "/patient-dashboard/messages",
+      category: "Pages"
+    },
+    // Resources
+    {
+      title: "Resources",
+      description: "Explore mental health resources",
+      icon: BookOpen,
+      href: "/patient-dashboard/resources",
+      category: "Pages"
+    },
+    // Favorites
+    {
+      title: "Favorites",
+      description: "View your favorite resources and mood mentors",
+      icon: Heart,
+      href: "/patient-dashboard/favorites",
+      category: "Pages"
+    },
+    // Reports
+    {
+      title: "Reports",
+      description: "View detailed reports of your progress",
+      icon: BarChart2,
+      href: "/patient-dashboard/reports",
+      category: "Pages"
+    },
+    // Profile
+    {
+      title: "Profile",
+      description: "View and edit your profile",
+      icon: User,
+      href: "/patient-dashboard/profile",
+      category: "Account"
+    },
+    // Notifications
+    {
+      title: "Notifications",
+      description: "View your notifications",
+      icon: Bell,
+      href: "/patient-dashboard/notifications",
+      category: "Account"
+    },
+    // Settings
+    {
+      title: "Settings",
+      description: "Manage your account settings",
+      icon: Settings,
+      href: "/patient-dashboard/settings",
+      category: "Account"
+    },
+    // Help Center
+    {
+      title: "Help Center",
+      description: "Get help with using the platform",
+      icon: BadgeHelp,
+      href: "/patient-dashboard/help",
+      category: "Account"
     }
-    
-    return navigation;
-  }, [isAdmin]);
+  ];
 
-  // Check if the icon is a valid React component
-  const isValidIcon = (icon: any): icon is React.ComponentType<any> => {
-    return typeof icon === 'function' || 
-           (typeof icon === 'object' && icon !== null && 'render' in icon);
-  };
-
+  // Update the current path when location changes
   useEffect(() => {
-    // Verify user is authenticated, if not redirect to login
-    if (!isAuthenticated) {
-      // Check localStorage first
-      const storedAuthState = localStorage.getItem('auth_state');
-      if (storedAuthState) {
-        try {
-          const { isAuthenticated: storedAuth } = JSON.parse(storedAuthState);
-          if (!storedAuth) {
-            // Debounce redirect to prevent flickering
-            const redirectTimer = setTimeout(() => {
-              // Use direct location change instead of React Router for a complete page refresh
-              window.location.href = '/login';
-            }, 300);
-            return () => clearTimeout(redirectTimer);
-          }
-          // If we have stored auth, don't redirect
-        } catch (e) {
-          console.error("Error parsing stored auth state:", e);
-          const redirectTimer = setTimeout(() => {
-            window.location.href = '/login';
-          }, 300);
-          return () => clearTimeout(redirectTimer);
-        }
-      } else {
-        const redirectTimer = setTimeout(() => {
-          window.location.href = '/login';
-        }, 300);
-        return () => clearTimeout(redirectTimer);
-      }
-      return;
-    }
+    setCurrentPath(location.pathname);
+  }, [location.pathname]);
 
-    setCurrentPath(window.location.pathname);
-  }, [window.location.pathname, isAuthenticated, navigate]);
-
+  // Handle mobile sidebar
   useEffect(() => {
     setSidebarOpen(!isMobile);
   }, [isMobile]);
 
+  // Mock fetch notifications (replace with actual API call)
   useEffect(() => {
-    // Fetch unread notifications and messages count
-    const fetchUnreadCounts = async () => {
-      try {
-        if (!user?.id) return;
-        
-        const [notificationsResponse, messagesResponse] = await Promise.all([
-          supabase
-            .from('notifications')
-            .select('id', { count: 'exact' })
-            .eq('user_id', user?.id)
-            .eq('read', false),
-          supabase
-            .from('messages')
-            .select('id', { count: 'exact' })
-            .eq('recipient_id', user?.id)
-            .eq('unread', true)
-        ]);
-
-        setUnreadNotifications(notificationsResponse.count || 0);
-        setUnreadMessages(messagesResponse.count || 0);
-      } catch (error) {
-        console.error('Error fetching unread counts:', error);
+    const mockNotifications = [
+      {
+        id: "1",
+        title: "New appointment",
+        content: "You have a new appointment with Dr. Smith tomorrow at 10:00 AM",
+        created_at: new Date(Date.now() - 1000 * 60 * 60 * 2).toISOString(),
+        read: false,
+        type: 'appointment' as const
+      },
+      {
+        id: "2",
+        title: "Journal reminder",
+        content: "Don't forget to write in your journal today",
+        created_at: new Date(Date.now() - 1000 * 60 * 60 * 24).toISOString(),
+        read: true,
+        type: 'journal' as const
+      },
+      {
+        id: "3",
+        title: "New message",
+        content: "You have a new message from your mood mentor",
+        created_at: new Date(Date.now() - 1000 * 60 * 60 * 48).toISOString(),
+        read: false,
+        type: 'message' as const
       }
-    };
+    ];
 
-    if (user?.id) {
-      fetchUnreadCounts();
-    }
-  }, [user?.id]);
+    setNotifications(mockNotifications);
+    setUnreadNotifications(mockNotifications.filter(n => !n.read).length);
+    setUnreadMessages(1); // Mock unread messages
+  }, []);
 
-  // Fetch notifications
-  useEffect(() => {
-    const fetchNotifications = async () => {
-      if (!user?.id) return;
-
-      try {
-        const { data, error } = await supabase
-          .from('notifications')
-          .select('*')
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false })
-          .limit(10);
-        
-        if (error) throw error;
-
-        // Create welcome notification for new users
-        const welcomeNotification = {
-          id: 'welcome-1',
-          title: 'Welcome to Emotions',
-          content: 'Hi! Welcome to Emotions. Feel free to take a tour around and familiarize yourself with our cool features to help you monitor, analyze and receive personalized recommendations to do with your mental health. Try our Journal feature, or Stress analytics feature or even emotional checkin!',
-          created_at: new Date().toISOString(),
-          read: false,
-          type: 'welcome' as const
-        } as Notification;
-
-        if (data && data.length > 0) {
-          // Map database fields to our Notification interface
-          const mappedNotifications: Notification[] = data.map((item: DbNotification) => ({
-            id: item.id,
-            title: item.title,
-            content: item.message,
-            created_at: item.created_at,
-            read: item.read,
-            type: 'other' as const,  // Default type if not available
-            user_id: item.user_id
-          }));
-          
-          // Check if welcome notification exists
-          const hasWelcomeNotification = mappedNotifications.some(n => n.title.includes('Welcome'));
-          
-          // If no welcome notification exists, add it to the beginning of the array
-          if (!hasWelcomeNotification) {
-            setNotifications([welcomeNotification, ...mappedNotifications]);
-            // Increment unread notifications counter for the welcome message
-            setUnreadNotifications(prev => prev + 1);
-          } else {
-            setNotifications(mappedNotifications);
-          }
-        } else {
-          // No notifications exist, add welcome notification
-          setNotifications([welcomeNotification]);
-          // Set unread notification counter to 1 for the welcome message
-          setUnreadNotifications(1);
-        }
-      } catch (error) {
-        console.error('Error fetching notifications:', error);
-      }
-    };
-
-    fetchNotifications();
-  }, [user?.id]);
-
-  // Handle clicking outside the notification popover
+  // Handle click outside of notification dropdown
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (notificationRef.current && !notificationRef.current.contains(event.target as Node)) {
@@ -422,619 +317,411 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, []);
-
-  // Close search dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
-        setIsSearchOpen(false);
-      }
-    }
-    
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, [searchRef]);
+  }, [notificationRef]);
 
   // Handle search input
   const handleSearchInput = (value: string) => {
     setSearchQuery(value);
-    setIsSearchOpen(value.length > 0);
     
-    if (!value) {
-      setSearchResults([]);
-      return;
-    }
-
-    const results = searchableItems.filter(
-      item =>
+    if (value.length > 0) {
+      const filteredResults = searchableItems.filter(item => 
         item.title.toLowerCase().includes(value.toLowerCase()) ||
         (item.description && item.description.toLowerCase().includes(value.toLowerCase()))
-    );
-
-    setSearchResults(results);
+      );
+      setSearchResults(filteredResults);
+    } else {
+      setSearchResults([]);
+    }
   };
 
   // Handle search result click
   const handleSearchResultClick = (href: string) => {
-    setIsSearchOpen(false);
-    setSearchQuery('');
+    setSearchOpen(false);
     navigate(href);
   };
 
-  const fetchNotificationCount = async () => {
-    if (!user?.id) return;
-
-    try {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('id, read')
-        .eq('user_id', user.id);
-
-      if (error) throw error;
-
-      // Filter out notifications that are marked as read in localStorage
-      const filteredData = data ? data.filter(n => {
-        // If marked read in localStorage, consider it read regardless of database
-        return !(localStorage.getItem(`notification_${n.id}_read`) === 'true');
-      }) : [];
-
-      // Count actually unread items after localStorage check
-      const unreadCount = filteredData.filter(item => !item.read).length;
-      
-      setUnreadNotifications(unreadCount > 0 || (unreadCount === 0 && data?.length === 0) ? unreadCount : 0);
-    } catch (error) {
-      console.error('Error fetching notification count:', error);
-    }
+  // Mark notification as read
+  const markNotificationAsRead = async (id: string) => {
+    // In a real app, make an API call to mark notification as read
+    setNotifications(prev => 
+      prev.map(notif => 
+        notif.id === id ? { ...notif, read: true } : notif
+      )
+    );
+    
+    setUnreadNotifications(prev => Math.max(0, prev - 1));
   };
 
-  const markNotificationAsRead = async (id: string, read: boolean) => {
-    try {
-      // For both UI responsiveness and persistence
-      if (read) {
-        localStorage.setItem(`notification_${id}_read`, 'true');
-        
-        // Immediately update the unread count in the UI for responsiveness
-        if (unreadNotifications > 0) {
-          setUnreadNotifications(prev => prev - 1);
-        }
-      }
-
-      // For demo notifications, don't update database
-      if (id === 'welcome-1') {
-        return;
-      }
-
-      // Update in database
-      const { error } = await supabase
-        .from('notifications')
-        .update({ 
-          read: read,
-          updated_at: new Date().toISOString() // Add timestamp to ensure update is processed
-        })
-        .eq('id', id)
-        .eq('user_id', user?.id || '');
-
-      if (error) {
-        throw error;
-      }
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-      // On error, still keep localStorage updated to ensure the best UX
-    }
-  };
-
-  const deleteNotification = async (id: string) => {
-    try {
-      // Find if the notification is unread before removing it
-      const notification = notifications.find(n => n.id === id);
-      const isUnread = notification && !notification.read;
-      
-      // Update local state immediately
-      setNotifications(notifications.filter(n => n.id !== id));
-      
-      // If it was unread, update the unread count
-      if (isUnread) {
-        setUnreadNotifications(prev => Math.max(0, prev - 1));
-      }
-      
-      // If this is a real notification (not mock), delete from database
-      if (id !== 'welcome-1' && user?.id) {
-        await supabase
-          .from('notifications')
-          .delete()
-          .eq('id', id)
-          .eq('user_id', user.id);
-          
-        toast.success("Notification deleted");
-      }
-    } catch (error) {
-      console.error('Error deleting notification:', error);
-      toast.error("Failed to delete notification");
-    }
-  };
-
+  // Handle notification click
   const handleNotificationClick = (notification: Notification) => {
-    // Mark as read if unread
-    if (!notification.read) {
-      markNotificationAsRead(notification.id, true);
-    }
-    
-    // Close notification panel
+    setSelectedNotification(notification);
+    setNotificationDialogOpen(true);
+    markNotificationAsRead(notification.id);
     setNotificationOpen(false);
-    
-    // Navigate to the notifications page for all notifications
-    navigate('/patient-dashboard/notifications');
   };
 
-  const handleNotificationDialogClose = () => {
-    setNotificationDialogOpen(false);
-    setSelectedNotification(null);
-  };
-
+  // Handle signout
   const handleSignout = async () => {
-    try {
-      await signout();
-      // Use direct location change instead of React Router for a complete page refresh
-      window.location.href = '/login';
-    } catch (error) {
-      console.error('Error during signout:', error);
-      toast.error('Failed to sign out. Please try again.');
+    await signout();
+    navigate('/login');
+  };
+
+  // Format time for notifications
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMinutes = Math.floor(diffMs / (60 * 1000));
+    const diffHours = Math.floor(diffMs / (60 * 60 * 1000));
+    const diffDays = Math.floor(diffMs / (24 * 60 * 60 * 1000));
+    
+    if (diffMinutes < 60) {
+      return `${diffMinutes} min ago`;
+    } else if (diffHours < 24) {
+      return `${diffHours} hours ago`;
+    } else {
+      return `${diffDays} days ago`;
     }
   };
 
-  // Add this function to mark all notifications as read
-  const markAllNotificationsAsRead = async () => {
-    try {
-      // First, get all notifications for this user
-      const { data, error: fetchError } = await supabase
-        .from('notifications')
-        .select('id')
-        .eq('user_id', user?.id || '');
-
-      if (fetchError) throw fetchError;
-
-      // Create a batch of notifications to mark as read
-      const notificationsToUpdate = [...notifications].filter(n => !n.read);
-      
-      // Mark all as read in localStorage for immediate UI effect
-      notificationsToUpdate.forEach(notification => {
-        localStorage.setItem(`notification_${notification.id}_read`, 'true');
-      });
-
-      // Also mark the welcome notification if it exists
-      localStorage.setItem('notification_welcome-1_read', 'true');
-
-      // Update UI state immediately
-      setNotifications(prev => 
-        prev.map(notification => ({ ...notification, read: true }))
-      );
-      setUnreadNotifications(0);
-
-      // Update database - include retry logic
-      const updateNotifications = async (retryCount = 0) => {
-        const { error: updateError } = await supabase
-          .from('notifications')
-          .update({ 
-            read: true, 
-            updated_at: new Date().toISOString() // Add timestamp to ensure update is processed
-          })
-          .eq('user_id', user?.id || '');
-
-        if (updateError) {
-          if (retryCount < 2) { // Retry up to 2 times
-            console.log(`Retrying database update (${retryCount + 1})...`);
-            setTimeout(() => updateNotifications(retryCount + 1), 1000);
-          } else {
-            throw updateError;
-          }
-        }
-      };
-
-      await updateNotifications();
-      
-      // Refresh notification count after successful update
-      fetchNotificationCount();
-    } catch (error) {
-      console.error('Error marking all notifications as read:', error);
-      // On error, still keep localStorage updated to ensure the best UX
+  // Get notification icon based on type
+  const getNotificationIcon = (type: Notification['type']) => {
+    switch (type) {
+      case 'appointment':
+        return <Calendar className="h-4 w-4 text-blue-500" />;
+      case 'message':
+        return <MessageSquare className="h-4 w-4 text-green-500" />;
+      case 'journal':
+        return <FileText className="h-4 w-4 text-purple-500" />;
+      case 'mood':
+        return <Activity className="h-4 w-4 text-orange-500" />;
+      default:
+        return <Info className="h-4 w-4 text-gray-500" />;
     }
   };
 
-  const firstName = user?.user_metadata?.first_name || 'User';
-  const lastName = user?.user_metadata?.last_name || '';
-  
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
-      {/* Include the welcome dialog */}
-      <WelcomeDialog />
-      
-      {/* Notification dialog */}
-      <Dialog open={notificationDialogOpen} onOpenChange={setNotificationDialogOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>
-              {selectedNotification?.title || "Notification"}
-            </DialogTitle>
-            <DialogDescription className="whitespace-pre-wrap">
-              {selectedNotification?.content || ""}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter className="flex justify-between items-center">
-            <Button 
-              variant="destructive" 
-              size="sm" 
-              onClick={() => {
-                if (selectedNotification) {
-                  deleteNotification(selectedNotification.id);
-                  setNotificationDialogOpen(false);
-                }
-              }}
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Delete
-            </Button>
-            <Button onClick={handleNotificationDialogClose}>
-              Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      
-      {/* Top Navigation Bar */}
-      <header className="fixed top-0 left-0 right-0 z-50 w-full bg-white border-b border-slate-200 shadow-sm">
-        <div className="flex h-16 items-center justify-between px-4 sm:px-6">
-          <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setSidebarOpen(!sidebarOpen)}
-              className="lg:hidden"
-            >
-              <span className="sr-only">Toggle sidebar</span>
-              {sidebarOpen ? (
-                <X className="h-6 w-6" aria-hidden="true" />
-              ) : (
-                <Menu className="h-6 w-6" aria-hidden="true" />
-              )}
-            </Button>
-            <Link to="/" className="flex items-center">
-              <img
-                src="/assets/emotions-logo-black.png"
-                alt="Emotions Dashboard Logo"
-                className="h-8 w-auto"
-              />
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      {/* Sidebar */}
+      <div 
+        className={`${
+          sidebarOpen ? "translate-x-0" : "-translate-x-full"
+        } fixed md:relative left-0 top-0 z-20 h-full w-64 bg-white border-r border-gray-200 transition-transform duration-300 ease-in-out md:translate-x-0`}
+      >
+        <div className="flex flex-col h-full">
+          {/* Sidebar header */}
+          <div className="flex items-center justify-between px-6 h-16 border-b border-gray-200">
+            <Link to="/patient-dashboard" className="flex items-center space-x-2">
+              <HeartPulse className="h-6 w-6 text-blue-600" />
+              <span className="text-xl font-semibold text-gray-900">Emotions</span>
             </Link>
+            <button
+              onClick={() => setSidebarOpen(false)}
+              className="md:hidden text-gray-500 hover:text-gray-900"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
-          {/* Search Bar */}
-          <div ref={searchRef} className="flex-1 max-w-2xl mx-4">
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (searchResults.length > 0) {
-                handleSearchResultClick(searchResults[0].href);
-              }
-            }} className="relative">
+          {/* Sidebar content */}
+          <div className="flex-1 overflow-y-auto py-4 px-3">
+            {patientNavigation.map((section) => (
+              <div key={section.section} className="mb-6">
+                <h3 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                  {section.section}
+                </h3>
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
+                    return (
+                      <Link
+                        key={item.name}
+                        to={item.href}
+                        className={`flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
+                          isActive
+                            ? "bg-blue-50 text-blue-700"
+                            : "text-gray-700 hover:bg-gray-100"
+                        }`}
+                        onClick={() => isMobile && setSidebarOpen(false)}
+                      >
+                        <item.icon className={`mr-3 h-5 w-5 ${isActive ? "text-blue-500" : "text-gray-400"}`} />
+                        <span>{item.name}</span>
+                        {item.name === "Messages" && unreadMessages > 0 && (
+                          <Badge variant="destructive" className="ml-auto">
+                            {unreadMessages}
+                          </Badge>
+                        )}
+                        {item.name === "Notifications" && unreadNotifications > 0 && (
+                          <Badge variant="destructive" className="ml-auto">
+                            {unreadNotifications}
+                          </Badge>
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Sidebar footer */}
+          <div className="p-4 border-t border-gray-200">
+            <Button
+              variant="outline"
+              className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
+              onClick={handleSignout}
+            >
+              <LogOut className="mr-2 h-4 w-4" />
+              Sign Out
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Main content */}
+      <div className="flex flex-col flex-1 w-0 overflow-hidden">
+        {/* Topbar */}
+        <div className="relative flex items-center justify-between h-16 bg-white border-b border-gray-200 px-4">
+          <button
+            onClick={() => setSidebarOpen(!sidebarOpen)}
+            className="md:hidden text-gray-600 hover:text-gray-900"
+          >
+            <Menu className="h-6 w-6" />
+          </button>
+
+          {/* Search */}
+          <div className="hidden md:block ml-4 flex-1 max-w-md">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
               <Input
-                type="search"
-                placeholder="Search dashboard..."
-                className="w-full pl-10 pr-4 rounded-full border-gray-200"
+                className="pl-10 py-1.5 border-gray-300"
+                placeholder="Search..."
                 value={searchQuery}
                 onChange={(e) => handleSearchInput(e.target.value)}
-                onFocus={() => setIsSearchOpen(searchQuery.length > 0)}
+                onFocus={() => setSearchOpen(true)}
               />
-
-              {/* Search Results Dropdown */}
-              {isSearchOpen && (
-                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-[400px] overflow-y-auto z-50">
-                  {searchResults.length > 0 ? (
-                    <div className="py-2">
-                      {Object.entries(
-                        searchResults.reduce((acc, item) => {
-                          acc[item.category] = [...(acc[item.category] || []), item];
-                          return acc;
-                        }, {} as Record<string, SearchResult[]>)
-                      ).map(([category, items]) => (
-                        <div key={category}>
-                          <div className="px-3 py-2 text-xs font-semibold text-gray-500 bg-gray-50">
-                            {category}
-                          </div>
-                          {items.map((item) => (
-                            <button
-                              key={item.href}
-                              className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-3"
-                              onClick={() => handleSearchResultClick(item.href)}
+              {searchOpen && searchResults.length > 0 && (
+                <div className="absolute z-10 w-full mt-2 bg-white shadow-lg rounded-md border border-gray-200 max-h-96 overflow-y-auto">
+                  <Command>
+                    <CommandList>
+                      <CommandInput placeholder="Type to search..." />
+                      <CommandEmpty>No results found.</CommandEmpty>
+                      {searchResults.reduce((acc, result) => {
+                        const category = result.category;
+                        const existing = acc.find((group) => group.category === category);
+                        if (existing) {
+                          existing.items.push(result);
+                        } else {
+                          acc.push({ category, items: [result] });
+                        }
+                        return acc;
+                      }, [] as { category: string; items: SearchResult[] }[]).map((group) => (
+                        <CommandGroup key={group.category} heading={group.category}>
+                          {group.items.map((result) => (
+                            <CommandItem
+                              key={result.href}
+                              onSelect={() => handleSearchResultClick(result.href)}
+                              className="flex items-center"
                             >
-                              {isValidIcon(item.icon) ? (
-                                <item.icon className="h-4 w-4 text-gray-500" />
-                              ) : null}
+                              {result.icon && <result.icon className="mr-2 h-4 w-4 text-gray-400" />}
                               <div>
-                                <div className="text-sm font-medium">{item.title}</div>
-                                {item.description && (
-                                  <div className="text-xs text-gray-500">{item.description}</div>
+                                <div>{result.title}</div>
+                                {result.description && (
+                                  <div className="text-xs text-gray-500">{result.description}</div>
                                 )}
                               </div>
-                            </button>
+                            </CommandItem>
                           ))}
-                        </div>
+                        </CommandGroup>
                       ))}
-                    </div>
-                  ) : (
-                    <div className="p-4 text-center text-gray-500">
-                      No results found
-                    </div>
-                  )}
+                    </CommandList>
+                  </Command>
                 </div>
               )}
-            </form>
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          {/* Right side actions */}
+          <div className="flex items-center space-x-4">
             {/* Notifications */}
-            <Popover open={notificationOpen} onOpenChange={setNotificationOpen}>
-              <PopoverTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="relative h-8 w-8 rounded-full hover:bg-slate-100"
-                >
-                  <Bell className="h-5 w-5" />
-                  {unreadNotifications > 0 && (
-                    <div className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></div>
-                  )}
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent ref={notificationRef} className="w-80 p-0 mr-4">
-                <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200">
-                  <h3 className="font-semibold">Notifications</h3>
-                  {unreadNotifications > 0 && (
-                    <Button 
-                      variant="ghost" 
-                      size="sm" 
-                      className="text-xs h-7 px-2"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        markAllNotificationsAsRead();
-                      }}
-                    >
-                      Mark all as read
-                    </Button>
-                  )}
-                </div>
-                <div className="max-h-[300px] overflow-y-auto">
-                  {notifications.length > 0 ? (
-                    <div className="divide-y">
-                      {notifications.map((notification) => (
-                        <div 
+            <div className="relative" ref={notificationRef}>
+              <button
+                onClick={() => setNotificationOpen(!notificationOpen)}
+                className="relative p-1 text-gray-600 hover:text-gray-900 rounded-full hover:bg-gray-100"
+              >
+                <Bell className="h-6 w-6" />
+                {unreadNotifications > 0 && (
+                  <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-xs flex items-center justify-center rounded-full">
+                    {unreadNotifications}
+                  </span>
+                )}
+              </button>
+              {notificationOpen && (
+                <div className="absolute right-0 mt-2 w-80 bg-white shadow-lg rounded-md overflow-hidden border border-gray-200 z-10">
+                  <div className="p-3 border-b border-gray-200">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold">Notifications</h3>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="text-xs text-blue-600 hover:text-blue-800"
+                        onClick={() => {
+                          // Mark all as read
+                          setNotifications(prev => prev.map(n => ({ ...n, read: true })));
+                          setUnreadNotifications(0);
+                        }}
+                      >
+                        Mark all as read
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-4 text-center text-gray-500">
+                        No notifications
+                      </div>
+                    ) : (
+                      notifications.map((notification) => (
+                        <div
                           key={notification.id}
-                          className={`p-3 cursor-pointer hover:bg-slate-50 ${!notification.read ? 'bg-blue-50/40' : ''}`}
+                          className={`p-3 border-b border-gray-100 hover:bg-gray-50 cursor-pointer ${
+                            !notification.read ? "bg-blue-50" : ""
+                          }`}
                           onClick={() => handleNotificationClick(notification)}
                         >
-                          <div className="flex items-start gap-3">
-                            <div className={`w-8 h-8 flex-shrink-0 rounded-full flex items-center justify-center 
-                              ${notification.type === 'welcome' ? 'bg-green-100 text-green-600' : 
-                                notification.type === 'update' ? 'bg-blue-100 text-blue-600' :
-                                notification.type === 'reminder' ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-600'}`}
-                            >
-                              {notification.type === 'welcome' ? '👋' : 
-                               notification.type === 'update' ? '🔄' :
-                               notification.type === 'reminder' ? '⏰' : '📢'}
+                          <div className="flex items-start">
+                            <div className="flex-shrink-0 mt-0.5">
+                              {getNotificationIcon(notification.type)}
                             </div>
-                            <div className="flex-1">
-                              <h4 className="text-sm font-medium">{notification.title}</h4>
-                              <p className="text-xs text-slate-500 line-clamp-2 mt-1">{notification.content}</p>
-                              <p className="text-xs text-slate-400 mt-1">
-                                {new Date(notification.created_at).toLocaleDateString(undefined, { 
-                                  month: 'short', 
-                                  day: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit'
-                                })}
-                              </p>
+                            <div className="ml-3 flex-1">
+                              <div className="text-sm font-medium text-gray-900">
+                                {notification.title}
+                              </div>
+                              <div className="text-xs text-gray-500 mt-0.5 line-clamp-2">
+                                {notification.content}
+                              </div>
+                              <div className="text-xs text-gray-400 mt-1">
+                                {formatTime(notification.created_at)}
+                              </div>
                             </div>
                             {!notification.read && (
-                              <div className="w-2 h-2 rounded-full bg-blue-500 mt-1"></div>
+                              <div className="ml-2 flex-shrink-0">
+                                <span className="inline-block h-2 w-2 rounded-full bg-blue-500"></span>
+                              </div>
                             )}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="p-4 text-center text-slate-500 text-sm">
-                      No notifications
-                    </div>
-                  )}
+                      ))
+                    )}
+                  </div>
+                  <div className="p-2 border-t border-gray-200">
+                    <Button
+                      variant="ghost"
+                      className="w-full text-sm text-center text-blue-600 hover:text-blue-800"
+                      onClick={() => {
+                        navigate('/patient-dashboard/notifications');
+                        setNotificationOpen(false);
+                      }}
+                    >
+                      View all notifications
+                    </Button>
+                  </div>
                 </div>
-                <div className="p-2 border-t border-slate-200 bg-slate-50">
-                  <Button 
-                    variant="ghost" 
-                    size="sm" 
-                    className="w-full text-xs"
-                    onClick={() => navigate('/patient-dashboard/notifications')}
-                  >
-                    View all notifications
-                  </Button>
-                </div>
-              </PopoverContent>
-            </Popover>
-
-            {/* Messages */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="relative h-8 w-8 rounded-full hover:bg-slate-100"
-              onClick={() => navigate('/patient-dashboard/messages')}
-            >
-              <MessageSquare className="h-5 w-5" />
-              {unreadMessages > 0 && (
-                <div className="absolute top-0 right-0 h-2 w-2 rounded-full bg-red-500"></div>
               )}
-            </Button>
+            </div>
 
-            {/* User Avatar Dropdown */}
+            {/* User menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" className="relative h-9 w-9 rounded-full p-0">
-                  <Avatar className="h-9 w-9 cursor-pointer border-2 border-blue-100">
-                    <AvatarImage src={user?.user_metadata?.avatar_url} />
-                    <AvatarFallback className="bg-blue-600 text-white">
-                      {firstName[0]?.toUpperCase() || 'U'}
+                <button className="flex items-center space-x-2">
+                  <Avatar className="h-8 w-8">
+                    <AvatarImage src={user?.avatar_url || ""} />
+                    <AvatarFallback className="bg-blue-100 text-blue-600">
+                      {user?.first_name?.[0] || user?.email?.[0]?.toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
-                </Button>
+                </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-56">
                 <DropdownMenuLabel>
                   <div className="flex flex-col">
-                    <span>{firstName} {lastName}</span>
-                    <span className="text-xs text-slate-500">{user?.email}</span>
+                    <span>{user?.full_name || user?.email}</span>
+                    <span className="text-xs text-gray-500">{user?.email}</span>
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={() => navigate('/patient-dashboard/profile')}>
                   <User className="mr-2 h-4 w-4" />
-                  <span>My Profile</span>
+                  Profile
                 </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => navigate('/patient-dashboard/settings')}>
                   <Settings className="mr-2 h-4 w-4" />
-                  <span>Settings</span>
+                  Settings
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onClick={handleSignout}>
                   <LogOut className="mr-2 h-4 w-4" />
-                  <span>Signout</span>
+                  Sign out
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
         </div>
-      </header>
 
-      {/* Mobile Search */}
-      <div className="md:hidden px-4 py-2 fixed top-16 z-40 w-full bg-white border-b border-slate-200">
-        <form onSubmit={(e) => {
-          e.preventDefault();
-          if (searchResults.length > 0) {
-            handleSearchResultClick(searchResults[0].href);
-          }
-        }} className="flex w-full">
-          <div className="relative w-full">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              type="search"
-              placeholder="Search dashboard..."
-              className="w-full pl-10 pr-4 rounded-full border-gray-200"
-              value={searchQuery}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              onFocus={() => setIsSearchOpen(searchQuery.length > 0)}
-            />
-          </div>
-        </form>
-      </div>
-
-      <div className="flex pt-16">
-        {/* Sidebar */}
-        <aside
-          className={`fixed inset-y-0 z-30 flex w-64 flex-col bg-white border-r border-slate-200 top-16 transition-transform duration-300 lg:translate-x-0 ${
-            sidebarOpen ? "translate-x-0" : "-translate-x-full"
-          }`}
-        >
-          <div className="flex grow flex-col overflow-y-auto pt-0">
-            <nav className="flex flex-1 flex-col pt-5 pb-20">
-              <div className="px-4 mb-5">
-                <div 
-                  className="rounded-xl p-3 cursor-pointer hover:bg-[#1AB0E0] transition-colors"
-                  style={{ backgroundColor: "#20C0F3" }}
-                  onClick={() => navigate('/patient-dashboard/mood-tracker')}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-600">
-                      <HeartPulse className="h-5 w-5 text-white" />
-                    </div>
-                    <div>
-                      <p className="text-xs font-medium text-white">Emotional Wellness</p>
-                      <p className="text-xs text-white font-semibold">Start Daily Check-in</p>
-                    </div>
-                    <Button 
-                      size="icon" 
-                      variant="ghost" 
-                      className="ml-auto h-8 w-8 rounded-full bg-white text-[#20C0F3] hover:bg-blue-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate('/patient-dashboard/mood-tracker');
-                      }}
-                    >
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-              
-              <ul role="list" className="flex flex-1 flex-col px-3 gap-y-5">
-                {navigationWithAdminLink.map((section) => (
-                  <li key={section.section}>
-                    <div className="px-3 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
-                      {section.section}
-                    </div>
-                    <ul role="list" className="space-y-1">
-                      {section.items.map((item) => {
-                        const isActive = currentPath === item.href;
-                        return (
-                          <li key={item.name}>
-                            <Button
-                              variant={isActive ? "secondary" : "ghost"}
-                              className={`w-full justify-start gap-x-3 ${
-                                isActive 
-                                  ? "bg-blue-50 text-blue-700 hover:bg-blue-100 font-medium" 
-                                  : "hover:bg-slate-50 text-slate-700"
-                              }`}
-                              onClick={() => {
-                                navigate(item.href);
-                                if (isMobile) setSidebarOpen(false);
-                              }}
-                            >
-                              {isValidIcon(item.icon) ? (
-                                <item.icon 
-                                  className={`h-5 w-5 flex-shrink-0 ${isActive ? "text-blue-700" : "text-slate-500"}`} 
-                                  aria-hidden="true" 
-                                />
-                              ) : null}
-                              {item.name}
-                            </Button>
-                          </li>
-                        );
-                      })}
-                    </ul>
-                  </li>
-                ))}
-              </ul>
-              
-              <div className="px-3 mt-auto">
-                <Button
-                  variant="ghost"
-                  className="w-full justify-start gap-x-3 text-red-600 hover:bg-red-50 hover:text-red-700"
-                  onClick={handleSignout}
-                >
-                  <LogOut className="h-5 w-5" aria-hidden="true" />
-                  Signout
-                </Button>
-              </div>
-            </nav>
-          </div>
-        </aside>
-
-        {/* Main Content */}
-        <main className={`flex-1 transition-all duration-300 w-full mt-0 ${sidebarOpen ? "lg:pl-64" : ""}`}>
-          <div className="py-4 px-3 sm:py-6 sm:px-6 lg:px-8">
-            <div className="max-w-full overflow-x-auto">
-              {children}
-            </div>
-          </div>
+        {/* Main content area */}
+        <main className="flex-1 overflow-y-auto bg-gray-50 p-4">
+          {children}
         </main>
       </div>
+
+      {/* Notification detail dialog */}
+      <Dialog open={notificationDialogOpen} onOpenChange={setNotificationDialogOpen}>
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{selectedNotification?.title}</DialogTitle>
+            <DialogDescription className="text-xs text-gray-500">
+              {selectedNotification?.created_at && formatTime(selectedNotification.created_at)}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4">
+            <p className="text-gray-700">{selectedNotification?.content}</p>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setNotificationDialogOpen(false)}
+            >
+              Close
+            </Button>
+            {selectedNotification?.type === 'appointment' && (
+              <Button onClick={() => {
+                navigate('/patient-dashboard/appointments');
+                setNotificationDialogOpen(false);
+              }}>
+                View Appointments
+              </Button>
+            )}
+            {selectedNotification?.type === 'message' && (
+              <Button onClick={() => {
+                navigate('/patient-dashboard/messages');
+                setNotificationDialogOpen(false);
+              }}>
+                View Messages
+              </Button>
+            )}
+            {selectedNotification?.type === 'journal' && (
+              <Button onClick={() => {
+                navigate('/patient-dashboard/journal');
+                setNotificationDialogOpen(false);
+              }}>
+                View Journal
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
-}
+};
+
+export default DashboardLayout; 

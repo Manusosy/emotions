@@ -5,7 +5,8 @@ import SpecialtiesSection from "../components/SpecialtiesSection";
 import HighlightedDoctors from "../components/HighlightedDoctors";
 import WhyBookUs from "../components/WhyBookUs";
 import PartnerLogos from "../components/PartnerLogos";
-import ScrollingInfoStrip from "@/features/ambassadors/components/ScrollingInfoStrip";
+import ScrollingInfoStrip from "@/features/mood-mentors/components/ScrollingInfoStrip";
+import { Star } from "lucide-react";
 
 const MoodTracker = () => {
   const emotionsRef = useRef<HTMLDivElement>(null);
@@ -27,8 +28,9 @@ const MoodTracker = () => {
       content: "Personalized Care Plans"
     },
     {
-      id: 3,
-      content: "Certified Ambassadors"
+      icon: <Star className="w-6 h-6 text-amber-400" />,
+      title: "Expert Support",
+      content: "Certified Mood Mentors"
     },
     {
       id: 4,

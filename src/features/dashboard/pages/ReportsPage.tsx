@@ -33,7 +33,7 @@ import {
 } from "lucide-react";
 import { format, subDays, isValid } from "date-fns";
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
+import { api } from "@/lib/api";
 import StressProgressChart from "../components/StressProgressChart";
 import ConsistencyHeatmap from "../components/ConsistencyHeatmap";
 
@@ -122,27 +122,25 @@ export default function ReportsPage() {
       const endDate = new Date();
       const startDate = subDays(endDate, parseInt(dateRange));
       
-      // Fetch stress assessments
-      const { data: assessmentsData, error: assessmentsError } = await supabase
-        .from('stress_assessments')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString())
-        .order('created_at', { ascending: false });
-        
-      if (assessmentsError) throw assessmentsError;
+      // Build query parameters
+      const params = new URLSearchParams({
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString()
+      });
       
-      // Fetch mood entries
-      const { data: moodData, error: moodError } = await supabase
-        .from('mood_entries')
-        .select('*')
-        .eq('user_id', user.id)
-        .gte('created_at', startDate.toISOString())
-        .lte('created_at', endDate.toISOString())
-        .order('created_at', { ascending: false });
-        
-      if (moodError) throw moodError;
+      // Fetch stress assessments and mood entries in parallel
+      const [assessmentsResponse, moodResponse] = await Promise.all([
+        api.get(`/api/assessments?${params.toString()}`),
+        api.get(`/api/mood-entries?${params.toString()}`)
+      ]);
+      
+      const [assessmentsData, moodData] = await Promise.all([
+        assessmentsResponse.json(),
+        moodResponse.json()
+      ]);
+      
+      if (!assessmentsResponse.ok) throw new Error('Failed to fetch assessments');
+      if (!moodResponse.ok) throw new Error('Failed to fetch mood entries');
       
       // Set data
       setAssessments(assessmentsData || []);
@@ -257,46 +255,33 @@ export default function ReportsPage() {
       metrics.moodScore = currentMood;
       
       // Set last mood entry date
-      metrics.lastMoodEntryDate = new Date(moodEntries[0].created_at);
+      const lastMoodDate = new Date(moodEntries[0].created_at);
+      if (isValid(lastMoodDate)) {
+        metrics.lastMoodEntryDate = lastMoodDate;
+      }
       
       // Calculate weekly average
       const oneWeekAgo = subDays(new Date(), 7);
-      const weeklyMoods = moodEntries.filter(m => 
-        new Date(m.created_at) >= oneWeekAgo
-      );
+      const weeklyMoodEntries = moodEntries.filter(m => {
+        const date = new Date(m.created_at);
+        return isValid(date) && date >= oneWeekAgo;
+      });
       
-      if (weeklyMoods.length > 0) {
-        metrics.weeklyMoodAvg = weeklyMoods.reduce((sum, m) => sum + m.mood_score, 0) / weeklyMoods.length;
+      if (weeklyMoodEntries.length > 0) {
+        metrics.weeklyMoodAvg = weeklyMoodEntries.reduce((sum, m) => sum + m.mood_score, 0) / weeklyMoodEntries.length;
       }
       
-      // Calculate trend
-      if (weeklyMoods.length >= 3) {
-        const halfPoint = Math.floor(weeklyMoods.length / 2);
-        const firstHalf = weeklyMoods.slice(halfPoint);
-        const secondHalf = weeklyMoods.slice(0, halfPoint);
+      // Calculate mood trend
+      if (weeklyMoodEntries.length >= 3) {
+        const halfPoint = Math.floor(weeklyMoodEntries.length / 2);
+        const firstHalf = weeklyMoodEntries.slice(halfPoint);
+        const secondHalf = weeklyMoodEntries.slice(0, halfPoint);
         
         const firstHalfAvg = firstHalf.reduce((sum, m) => sum + m.mood_score, 0) / firstHalf.length;
         const secondHalfAvg = secondHalf.reduce((sum, m) => sum + m.mood_score, 0) / secondHalf.length;
         
-        // Higher mood = improved mood
         if (secondHalfAvg > firstHalfAvg + 0.5) metrics.moodTrend = 'improving';
         else if (secondHalfAvg < firstHalfAvg - 0.5) metrics.moodTrend = 'declining';
-      }
-      
-      // Add mood check-in dates to the heatmap data if they're valid dates
-      const moodDates = moodEntries.map(m => {
-        const date = new Date(m.created_at);
-        return isValid(date) ? date : null;
-      }).filter(Boolean) as Date[]; // Filter out any invalid dates
-      
-      setCheckInDates(prev => [...prev, ...moodDates]);
-      
-      // Update first check-in date if mood entries are older
-      if (moodEntries.length > 0) {
-        const oldestMoodEntry = new Date(moodEntries[moodEntries.length - 1].created_at);
-        if (isValid(oldestMoodEntry) && (!firstCheckInDate || oldestMoodEntry < firstCheckInDate)) {
-          setFirstCheckInDate(oldestMoodEntry);
-        }
       }
     }
     
@@ -1260,8 +1245,8 @@ export default function ReportsPage() {
                                           height: '100%' 
                                         }}
                                       ></div>
-                                    </div>
-                                  </div>
+                            </div>
+                          </div>
                   </div>
                 </div>
                 

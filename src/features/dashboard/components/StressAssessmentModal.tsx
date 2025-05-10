@@ -2,10 +2,11 @@ import { useState, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 import { Activity, ArrowRight, Brain, HeartPulse, Sparkles } from "lucide-react";
+import { api } from "@/lib/api";
+import { errorLog } from "@/utils/environment";
 import "./styles.css"; // This will be created if it doesn't exist
 
 // Assessment questions from the image
@@ -18,115 +19,67 @@ const stressQuestions = [
 
 export default function StressAssessmentModal() {
   const { user } = useAuth();
-  const [open, setOpen] = useState(false);
-  const [responses, setResponses] = useState<Array<{id: number, type: string, score: number}>>([]);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [isOpen, setIsOpen] = useState(false);
+  const [currentQuestion, setCurrentQuestion] = useState(0);
+  const [responses, setResponses] = useState<Record<number, number>>({});
   const [combinedScore, setCombinedScore] = useState(0);
-  const [healthPercentage, setHealthPercentage] = useState(0);
-  const [healthStatus, setHealthStatus] = useState("No Assessment");
-  const [healthColor, setHealthColor] = useState("#cccccc");
-  const [isComplete, setIsComplete] = useState(false);
+  const [showResult, setShowResult] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   
-  // Initialize default values when modal opens
+  // Reset state when dialog is opened
+  const handleOpen = () => {
+    setIsOpen(true);
+    setCurrentQuestion(0);
+    setResponses({});
+    setCombinedScore(0);
+    setShowResult(false);
+  };
+  
+  // Calculate score whenever responses change
   useEffect(() => {
-    if (open) {
-      // Reset to initial state when modal opens
-      setCurrentStep(0);
-      
-      // Set default mid-point values (3) for all questions
-      const defaultResponses = stressQuestions.map(q => ({
-        id: q.id,
-        type: q.type,
-        score: 3 // Default middle value on scale of 1-5
-      }));
-      
-      setResponses(defaultResponses);
-      setIsComplete(false);
-      calculateResults(defaultResponses);
+    if (Object.keys(responses).length > 0) {
+      const totalScore = Object.values(responses).reduce((acc, score) => acc + score, 0);
+      const averageScore = totalScore / Object.keys(responses).length;
+      setCombinedScore(averageScore / 10); // Convert to 0-1 scale for easier display
     }
-  }, [open]);
+  }, [responses]);
   
-  // Calculate health metrics based on responses
-  const calculateResults = (currentResponses: Array<{id: number, type: string, score: number}>) => {
-    if (currentResponses.length === 0) return;
-    
-    // Get all questions and their scores
-    const allScores = currentResponses.map(r => r.score);
-    
-    // Calculate average score (1-5 scale)
-    const avgScore = allScores.reduce((sum, score) => sum + score, 0) / allScores.length;
-    
-    // Convert to stress level (0-10 scale)
-    // For the first 3 questions, higher = more stress
-    // For question 4 (sleep well), the scale is inverted (higher = less stress)
-    const stressItems = currentResponses.filter(r => r.id <= 3);
-    const sleepItem = currentResponses.find(r => r.id === 4);
-    
-    // Calculate stress score (1-5 scale)
-    const stressScore = stressItems.reduce((sum, r) => sum + r.score, 0) / stressItems.length;
-    
-    // Convert sleep score (invert it since better sleep = less stress)
-    const sleepScore = sleepItem ? 6 - sleepItem.score : 3; // Invert: 5→1, 4→2, etc.
-    
-    // Combined weighted score (0-10 scale)
-    // 75% weight to stress questions, 25% to sleep question
-    const newScore = ((stressScore * 0.75) + (sleepScore * 0.25)) * 2;
-    setCombinedScore(parseFloat(newScore.toFixed(1)));
-    
-    // Calculate health percentage (inverse of stress - higher is better)
-    const newHealthPercentage = Math.max(0, Math.min(100, Math.round((10 - newScore) * 10)));
-    setHealthPercentage(newHealthPercentage);
-    
-    // Set health status based on percentage
-    if (newHealthPercentage >= 80) {
-      setHealthStatus("Excellent");
-      setHealthColor("#4ade80"); // Green
-    } else if (newHealthPercentage >= 60) {
-      setHealthStatus("Good");
-      setHealthColor("#a3e635"); // Light green
-    } else if (newHealthPercentage >= 40) {
-      setHealthStatus("Fair");
-      setHealthColor("#facc15"); // Yellow
-    } else if (newHealthPercentage >= 20) {
-      setHealthStatus("Concerning");
-      setHealthColor("#fb923c"); // Orange
-    } else {
-      setHealthStatus("Worrying");
-      setHealthColor("#ef4444"); // Red
-    }
+  // Handle response slider change
+  const handleResponseChange = (value: number[]) => {
+    setResponses(prev => ({
+      ...prev,
+      [stressQuestions[currentQuestion].id]: value[0]
+    }));
   };
   
-  const handleScoreChange = (questionId: number, questionType: string, value: number) => {
-    const updatedResponses = responses.map(response => 
-      response.id === questionId 
-        ? { ...response, score: value }
-        : response
-    );
-    
-    setResponses(updatedResponses);
-    calculateResults(updatedResponses);
-  };
-  
-  // Handle finishing the assessment
-  const handleComplete = () => {
-    setIsComplete(true);
-  };
-  
-  // Handle navigating to next question
+  // Navigate to next question
   const handleNext = () => {
-    if (currentStep < stressQuestions.length - 1) {
-      setCurrentStep(currentStep + 1);
+    if (currentQuestion < stressQuestions.length - 1) {
+      setCurrentQuestion(prev => prev + 1);
     } else {
-      handleComplete();
+      setShowResult(true);
     }
   };
   
-  // Handle navigating to previous question
-  const handlePrevious = () => {
-    if (currentStep > 0) {
-      setCurrentStep(currentStep - 1);
-    }
+  // Determine color based on stress level
+  const getStressColor = () => {
+    if (combinedScore < 0.3) return "text-green-500";
+    if (combinedScore < 0.6) return "text-yellow-500";
+    return "text-red-500";
+  };
+  
+  // Get message based on stress level
+  const getStressMessage = () => {
+    if (combinedScore < 0.3) return "Your stress levels are low. Keep up the good work!";
+    if (combinedScore < 0.6) return "You're experiencing moderate stress. Consider some relaxation techniques.";
+    return "Your stress levels are high. Please take time for self-care and consider speaking with a professional.";
+  };
+  
+  // Get emoji based on stress level
+  const getStressEmoji = () => {
+    if (combinedScore < 0.3) return "😊";
+    if (combinedScore < 0.6) return "😐";
+    return "😔";
   };
   
   // Handle final submission of the assessment
@@ -144,268 +97,149 @@ export default function StressAssessmentModal() {
       const assessmentTime = now.toISOString();
       
       try {
-        // Save to stress_assessments table
-        const { error: assessmentError } = await supabase
-          .from('stress_assessments')
-          .insert({
-            user_id: user.id,
-            stress_score: combinedScore,
-            responses: responses,
-            created_at: assessmentTime
-          });
-          
-        if (assessmentError) throw assessmentError;
+        // Save stress assessment
+        const assessmentResponse = await api.post('/api/stress-assessments', {
+          user_id: user.id,
+          stress_score: combinedScore,
+          responses: responses,
+          created_at: assessmentTime
+        });
+        
+        if (!assessmentResponse.ok) {
+          throw new Error('Failed to save assessment');
+        }
         
         // Check if user_assessment_metrics exists and update it
-        const { data: existingMetrics, error: metricsCheckError } = await supabase
-          .from('user_assessment_metrics')
-          .select('id, user_id')
-          .eq('user_id', user.id)
-          .maybeSingle();
-          
-        if (metricsCheckError && !metricsCheckError.message.includes('column') && !metricsCheckError.message.includes('does not exist')) {
-          throw metricsCheckError;
+        const metricsCheckResponse = await api.get(`/api/assessment-metrics/${user.id}`);
+        
+        // If metrics exist, update them, otherwise create new
+        if (metricsCheckResponse.ok) {
+          // Update existing metrics
+          await api.put(`/api/assessment-metrics/${user.id}`, {
+            last_assessment_date: assessmentTime,
+            stress_level: combinedScore,
+            stress_trend: 0 // Default to no trend initially
+          });
+        } else {
+          // Create new metrics if they don't exist
+          await api.post('/api/assessment-metrics', {
+            user_id: user.id,
+            last_assessment_date: assessmentTime,
+            stress_level: combinedScore,
+            streak: 1,
+            first_check_in_date: assessmentTime
+          });
         }
         
-        // If the table exists, update metrics
-        if (existingMetrics) {
-          // Update the metrics with the new stress level
-          const { error: updateError } = await supabase
-            .from('user_assessment_metrics')
-            .update({
-              stress_level: combinedScore / 10, // Convert to 0-1 scale for consistency
-              last_assessment_at: assessmentTime,
-              updated_at: assessmentTime
-            })
-            .eq('user_id', user.id);
-            
-          if (updateError) throw updateError;
+        // Show completion message
+        toast.success("Assessment completed successfully!");
+        setIsOpen(false);
+      } catch (error: any) {
+        errorLog('Error saving stress assessment:', error);
+        // If it's a schema error, display a more specific message
+        if (error.message && error.message.includes('column')) {
+          toast.error("There was an issue with the database schema. Please try again later.");
         } else {
-          // Create new metrics entry
-          const { error: insertError } = await supabase
-            .from('user_assessment_metrics')
-            .insert({
-              user_id: user.id,
-              stress_level: combinedScore / 10, // Convert to 0-1 scale for consistency
-              consistency: 0, // Default value
-              last_assessment_at: assessmentTime,
-              updated_at: assessmentTime
-            });
-            
-          if (insertError) throw insertError;
-        }
-        
-        toast.success("Assessment completed successfully");
-        
-        // Close modal and reset state
-        setOpen(false);
-        setResponses([]);
-        setCurrentStep(0);
-        setIsComplete(false);
-        
-        // Reload the page to reflect changes immediately
-        window.location.reload();
-      } catch (dbError: any) {
-        console.error("Database error:", dbError);
-        
-        // If there was a schema issue, still show success to the user
-        // but log the error for admin to fix the database schema
-        if (dbError.message && (
-            dbError.message.includes('column') || 
-            dbError.message.includes('does not exist'))) {
-          console.warn("Schema issue detected, assessment saved but metrics may not be updated:", dbError.message);
-          toast.success("Assessment saved");
-          setOpen(false);
-          setResponses([]);
-          // Reload the page to reflect changes
-          window.location.reload();
-        } else {
-          throw dbError;
+          toast.error("Failed to save your assessment. Please try again.");
         }
       }
-    } catch (error: any) {
-      console.error("Error saving stress assessment:", error);
-      toast.error(error.message || "Failed to save assessment");
+    } catch (error) {
+      errorLog('Error in stress assessment:', error);
+      toast.error("An unexpected error occurred. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
   };
-  
-  // Get the current question
-  const currentQuestion = stressQuestions[currentStep];
-  const currentResponse = responses.find(r => r.id === currentQuestion?.id);
-  
+
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogTrigger asChild>
         <Button 
-          variant="outline" 
-          className="bg-[#20C0F3] hover:bg-[#1ba8d5] text-white border-none shadow-sm flex items-center gap-2"
+          onClick={handleOpen}
+          className="bg-gradient-to-r from-blue-500 to-violet-500 text-white hover:from-blue-600 hover:to-violet-600"
         >
-          <Brain className="w-4 h-4" />
-          Take Assessment
+          <Activity className="mr-2 h-4 w-4" />
+          Take Stress Assessment
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>Stress Assessment</DialogTitle>
+          <DialogTitle>
+            {!showResult 
+              ? `Question ${currentQuestion + 1}/${stressQuestions.length}` 
+              : "Your Stress Assessment"
+            }
+          </DialogTitle>
         </DialogHeader>
         
-        {!isComplete ? (
-          // Question display
-          <div className="space-y-6 my-4">
-            {/* Progress indicator - keeping the blue color */}
-            <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden">
-              <div 
-                className="h-full bg-blue-500 transition-all duration-300" 
-                style={{ width: `${((currentStep + 1) / stressQuestions.length) * 100}%` }}
-              ></div>
-            </div>
+        {!showResult ? (
+          <div className="space-y-6 py-4">
+            <p className="text-lg">{stressQuestions[currentQuestion].text}</p>
             
-            {/* Current question */}
             <div className="space-y-4">
-              <h3 className="text-lg font-medium">
-                {currentQuestion?.text}
-              </h3>
-              
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-sm text-slate-600">
-                  <span>Not at all</span>
-                  <span>Extremely</span>
-                </div>
-                
-                {/* Create a custom slider that's fully styled as orange-yellow */}
-                <div className="py-6 px-2 relative">
-                  {/* The main track */}
-                  <div className="w-full h-2 rounded-full bg-slate-200"></div>
-                  
-                  {/* The filled part of the track */}
-                  <div 
-                    className="absolute top-[50%] left-0 h-2 rounded-full bg-amber-400 transform -translate-y-1/2" 
-                    style={{ width: `${((currentResponse?.score || 3) - 1) / 4 * 100}%` }}
-                  ></div>
-                  
-                  {/* The draggable thumb */}
-                  <div 
-                    className="absolute top-[50%] h-6 w-6 rounded-full bg-amber-400 border-2 border-amber-500 transform -translate-y-1/2 cursor-grab"
-                    style={{ 
-                      left: `calc(${((currentResponse?.score || 3) - 1) / 4 * 100}%)`,
-                      marginLeft: "-12px" // Center the 24px thumb
-                    }}
-                    onMouseDown={(e) => {
-                      const slider = e.currentTarget.parentElement;
-                      if (!slider) return;
-                      
-                      const sliderRect = slider.getBoundingClientRect();
-                      const sliderWidth = sliderRect.width;
-                      
-                      const handleDrag = (moveEvent: MouseEvent) => {
-                        moveEvent.preventDefault();
-                        const offsetX = moveEvent.clientX - sliderRect.left;
-                        const percentage = Math.max(0, Math.min(1, offsetX / sliderWidth));
-                        const score = percentage * 4 + 1; // Convert to 1-5 scale
-                        
-                        if (currentQuestion) {
-                          handleScoreChange(currentQuestion.id, currentQuestion.type, score);
-                        }
-                      };
-                      
-                      const handleMouseUp = () => {
-                        document.removeEventListener('mousemove', handleDrag);
-                        document.removeEventListener('mouseup', handleMouseUp);
-                      };
-                      
-                      document.addEventListener('mousemove', handleDrag);
-                      document.addEventListener('mouseup', handleMouseUp);
-                    }}
-                  ></div>
-                </div>
-                
-                {/* Score indicator */}
-                <div className="flex justify-center mt-2">
-                  <span className="text-sm font-medium px-3 py-1 bg-slate-100 rounded-full">
-                    {currentResponse?.score.toFixed(1)}
-                  </span>
-                </div>
+              <div className="flex justify-between text-sm text-gray-500">
+                <span>Not at all</span>
+                <span>Very much</span>
+              </div>
+              <Slider
+                defaultValue={[responses[stressQuestions[currentQuestion].id] || 5]}
+                max={10}
+                step={1}
+                onValueChange={handleResponseChange}
+              />
+              <div className="flex justify-between">
+                <span className="text-sm text-gray-500">
+                  {stressQuestions[currentQuestion].type === "stress" ? "Low stress" : "Poor"}
+                </span>
+                <span className="text-sm font-medium">
+                  {responses[stressQuestions[currentQuestion].id] || 5}/10
+                </span>
+                <span className="text-sm text-gray-500">
+                  {stressQuestions[currentQuestion].type === "stress" ? "High stress" : "Good"}  
+                </span>
               </div>
             </div>
             
-            {/* Navigation buttons */}
-            <div className="flex justify-between pt-4">
-              <Button
-                variant="outline"
-                onClick={handlePrevious}
-                disabled={currentStep === 0}
-              >
-                Previous
-              </Button>
-              
-              <Button
-                onClick={handleNext}
-                className="bg-[#20C0F3] hover:bg-[#1ba8d5] text-white flex items-center gap-1"
-              >
-                {currentStep === stressQuestions.length - 1 ? 'Review' : 'Next'}
-                <ArrowRight className="w-4 h-4" />
-              </Button>
-            </div>
+            <Button 
+              className="w-full"
+              onClick={handleNext}
+              disabled={!responses[stressQuestions[currentQuestion].id]}
+            >
+              {currentQuestion < stressQuestions.length - 1 ? "Next" : "View Results"}
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Button>
           </div>
         ) : (
-          // Results review
-          <div className="space-y-6 my-4">
-            <div className="p-4 bg-slate-50 rounded-lg border border-slate-200">
-              <div className="text-center mb-2">
-                <span className="text-sm font-medium text-slate-600">Your Assessment Result</span>
+          <div className="space-y-6 py-4">
+            <div className="flex flex-col items-center justify-center text-center space-y-4">
+              <div className="text-6xl">{getStressEmoji()}</div>
+              <div className="bg-gray-100 rounded-full px-3 py-1 text-sm">
+                <span>Stress Level: </span>
+                <span className={getStressColor()}>
+                  {Math.round(combinedScore * 100)}%
+                </span>
               </div>
-              <div className="flex flex-col items-center">
-                <div className="text-xl font-bold" style={{ color: healthColor }}>
-                  {healthStatus}
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
-                  <div 
-                    className="h-2 rounded-full transition-all duration-500 ease-in-out"
-                    style={{ 
-                      width: `${healthPercentage}%`,
-                      backgroundColor: healthColor
-                    }}
-                  ></div>
-                </div>
-                <div className="text-sm mt-2 text-slate-500">
-                  {healthPercentage}% Emotional Health
-                </div>
-              </div>
-            </div>
-            
-            <div className="space-y-4">
-              <h3 className="text-md font-medium">Your Responses:</h3>
-              <div className="space-y-2">
-                {stressQuestions.map((question, index) => {
-                  const response = responses.find(r => r.id === question.id);
-                  return (
-                    <div key={question.id} className="flex justify-between items-center py-2 border-b border-slate-100">
-                      <span className="text-sm">{question.text}</span>
-                      <span className="text-sm font-medium">{response?.score.toFixed(1)}/5</span>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            
-            <div className="flex justify-between pt-4">
-              <Button
-                variant="outline"
-                onClick={() => setIsComplete(false)}
-              >
-                Back to Questions
-              </Button>
+              <p>{getStressMessage()}</p>
               
-              <Button
-                onClick={handleSubmit}
-                disabled={isSubmitting}
-                className="bg-green-600 hover:bg-green-700 text-white"
-              >
-                {isSubmitting ? "Saving..." : "Submit Assessment"}
-              </Button>
+              <div className="w-full bg-gray-200 rounded-full h-2.5 mt-4">
+                <div 
+                  className="h-2.5 rounded-full" 
+                  style={{ 
+                    width: `${combinedScore * 100}%`,
+                    backgroundColor: combinedScore < 0.3 ? '#22c55e' : combinedScore < 0.6 ? '#eab308' : '#ef4444'
+                  }}
+                ></div>
+              </div>
             </div>
+            
+            <Button 
+              className="w-full"
+              onClick={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? "Saving..." : "Save Assessment"}
+              <HeartPulse className="ml-2 h-4 w-4" />
+            </Button>
           </div>
         )}
       </DialogContent>

@@ -4,11 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 import { Smile, Meh, Frown, BookOpen } from "lucide-react";
 import { Checkbox } from "@/components/ui/checkbox";
+import { moodService } from "@/services/moodService";
+import { journalService } from "@/services/journalService";
+import { stressService } from "@/services/stressService";
 
 // Assessment question types for stress level calculation
 type AssessmentQuestion = {
@@ -74,56 +76,54 @@ export default function MoodAssessment() {
   };
 
   const handleSubmit = async () => {
-    if (!user) return;
+    if (!user?.id) return;
 
     try {
       setIsSubmitting(true);
 
+      let journalEntryId: string | undefined;
+
       if (createJournalEntry) {
         // Create a journal entry first
-        const { data: journalEntry, error: journalError } = await supabase
-          .from("journal_entries")
-          .insert({
-            user_id: user.id,
-            title: `Mood Entry - ${new Date().toLocaleDateString()}`,
-            content: `<p>${notes}</p>`,
-            mood: getMoodResult(moodScore).toLowerCase() as any,
-          })
-          .select()
-          .single();
+        const journalEntry = await journalService.createJournalEntry({
+          userId: user.id,
+          content: notes,
+          mood: getMoodResult(moodScore).toLowerCase(),
+        });
 
-        if (journalError) throw journalError;
+        journalEntryId = journalEntry.id;
+      }
 
-        // Create mood entry with journal reference
-        const { error: moodError } = await supabase
-          .from("mood_entries")
-          .insert({
-            user_id: user.id,
-            mood_score: moodScore,
-            assessment_result: getMoodResult(moodScore),
-            notes: notes,
-            journal_entry_id: journalEntry?.id,
-            assessment_data: assessmentResponses.length > 0 ? assessmentResponses : undefined
-          });
+      // Create mood entry
+      await moodService.createMoodEntry(user.id, {
+        score: moodScore,
+        mood: getMoodResult(moodScore),
+        notes: notes,
+      });
 
-        if (moodError) throw moodError;
+      // If stress assessment was included, create stress entry
+      if (showAssessment && assessmentResponses.length > 0) {
+        // Calculate average stress score
+        const stressScore = Math.round(
+          assessmentResponses
+            .filter(r => r.question_type === 'stress')
+            .reduce((acc, curr) => acc + curr.score, 0) / 
+          assessmentResponses.filter(r => r.question_type === 'stress').length
+        );
 
-        toast.success("Mood logged and journal entry created!");
-        navigate(`/journal/${journalEntry?.id}`);
-      } else {
-        // Just create mood entry
-        const { error } = await supabase
-          .from("mood_entries")
-          .insert({
-            user_id: user.id,
-            mood_score: moodScore,
-            assessment_result: getMoodResult(moodScore),
-            notes: notes,
-            assessment_data: assessmentResponses.length > 0 ? assessmentResponses : undefined
-          });
+        await stressService.createStressAssessment({
+          userId: user.id,
+          score: stressScore,
+          symptoms: [], // Would need to be added to the UI
+          triggers: [], // Would need to be added to the UI
+          notes: notes,
+        });
+      }
 
-        if (error) throw error;
-        toast.success("Mood logged successfully!");
+      toast.success(createJournalEntry ? "Mood logged and journal entry created!" : "Mood logged successfully!");
+      
+      if (journalEntryId) {
+        navigate(`/journal/${journalEntryId}`);
       }
 
       setNotes("");

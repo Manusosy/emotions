@@ -15,7 +15,6 @@ import {
   FileText,
   X 
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -29,6 +28,7 @@ import {
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
+import { Notification, NotificationPreferences, notificationService } from "@/services/notificationService";
 
 // Mock notification data for development and testing
 const mockNotifications = [
@@ -79,27 +79,6 @@ const mockNotifications = [
   }
 ];
 
-interface Notification {
-  id: string;
-  type: string;
-  content: string;
-  timestamp: string;
-  read: boolean;
-  avatar?: string | null;
-  senderName: string;
-  title?: string;
-  created_at?: string;
-  action_url?: string;
-  user_id?: string;
-}
-
-interface NotificationPreferences {
-  emailNotifications: boolean;
-  appointmentReminders: boolean;
-  moodTrackingReminders: boolean;
-  marketingCommunications: boolean;
-}
-
 export default function NotificationsPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -116,82 +95,29 @@ export default function NotificationsPage() {
   
   // Fetch notifications
   useEffect(() => {
-    fetchNotifications();
-    fetchNotificationPreferences();
-  }, [user?.id]);
+    if (user) {
+      fetchNotifications();
+      fetchNotificationPreferences();
+    }
+  }, [user]);
 
   const fetchNotifications = async () => {
-    if (!user?.id) return;
+    if (!user) return;
 
     try {
       setLoading(true);
       
-      // For production use the database
+      // For production use the API
       if (process.env.NODE_ENV === 'production') {
-      const { data, error } = await supabase
-        .from('notifications')
-        .select('*')
-        .eq('user_id', user.id)
-        .order('created_at', { ascending: false });
-      
-      if (error) throw error;
-
-        // Map database notifications to our interface
-        let userNotifications: Notification[] = [];
-        
-        if (data && data.length > 0) {
-          userNotifications = data.map(item => {
-            // Determine notification type based on content or database type
-            let type = 'system';
-            if (item.title?.toLowerCase().includes('appointment') || item.message?.toLowerCase().includes('appointment')) {
-              type = 'appointment';
-            } else if (item.title?.toLowerCase().includes('message') || item.message?.toLowerCase().includes('message')) {
-              type = 'message';
-            } else if (item.title?.toLowerCase().includes('journal') || item.message?.toLowerCase().includes('journal')) {
-              type = 'journal';
-            } else if (item.type) {
-              type = item.type;
-            }
-            
-            // Convert database field names to our notification interface
-          return {
-            id: item.id,
-              type: type,
-              content: item.message || '',
-              timestamp: formatNotificationDate(item.created_at),
-              read: item.read,
-              avatar: null,
-              senderName: item.sender_name || 'System',
-            title: item.title,
-            created_at: item.created_at,
-            user_id: item.user_id
-          };
-        });
-        }
-        
-        // Add welcome notification if no notifications exist
-        if (userNotifications.length === 0) {
-          userNotifications = [{
-            id: 'welcome-1',
-            type: 'system',
-            content: 'Welcome to Emotions. Feel free to explore our features to help you monitor, analyze and receive personalized recommendations for your mental health.',
-            timestamp: 'Just now',
-            read: false,
-            avatar: null,
-            senderName: 'System',
-            title: 'Welcome to Emotions',
-            created_at: new Date().toISOString(),
-            user_id: user.id
-          }];
-        }
-        
-        setNotifications(userNotifications);
+        const notifications = await notificationService.getNotifications();
+        setNotifications(notifications);
       } else {
         // For development, use mock data
         setNotifications(mockNotifications);
       }
     } catch (error) {
       console.error('Error fetching notifications:', error);
+      toast.error('Failed to load notifications');
       // Fallback to mock data in case of error
       setNotifications(mockNotifications);
     } finally {
@@ -200,61 +126,104 @@ export default function NotificationsPage() {
   };
 
   const fetchNotificationPreferences = async () => {
-    if (!user?.id) return;
+    if (!user) return;
 
     try {
-      const { data, error } = await supabase
-        .from('user_preferences')
-        .select('notification_preferences')
-        .eq('user_id', user.id)
-        .single();
-
-      if (error && error.code !== 'PGRST116') {
-        // PGRST116 is "no rows returned" error, which just means we'll use defaults
-        console.error('Error fetching notification preferences:', error);
-        return;
-      }
-
-      if (data?.notification_preferences) {
-        setPreferences({
-          emailNotifications: data.notification_preferences.emailNotifications ?? true,
-          appointmentReminders: data.notification_preferences.appointmentReminders ?? true,
-          moodTrackingReminders: data.notification_preferences.moodTrackingReminders ?? true,
-          marketingCommunications: data.notification_preferences.marketingCommunications ?? false,
-        });
+      if (process.env.NODE_ENV === 'production') {
+        const prefs = await notificationService.getPreferences();
+        setPreferences(prefs);
       }
     } catch (error) {
       console.error('Error fetching notification preferences:', error);
+      toast.error('Failed to load notification preferences');
     }
   };
 
   const saveNotificationPreferences = async () => {
-    if (!user?.id) return;
-
     try {
-      const { error } = await supabase
-        .from('user_preferences')
-        .upsert({
-          user_id: user.id,
-          notification_preferences: preferences,
-          updated_at: new Date().toISOString()
-        });
-
-      if (error) throw error;
-      
-      toast.success('Notification preferences saved');
+      if (process.env.NODE_ENV === 'production') {
+        await notificationService.updatePreferences(preferences);
+        toast.success('Notification preferences updated');
+      } else {
+        toast.success('Notification preferences updated (mock)');
+      }
+      setIsSettingsOpen(false);
     } catch (error) {
       console.error('Error saving notification preferences:', error);
-      toast.error('Failed to save preferences');
+      toast.error('Failed to update notification preferences');
     }
   };
 
   const formatNotificationDate = (dateStr: string) => {
     try {
-      const date = new Date(dateStr);
-      return formatDistanceToNow(date, { addSuffix: true });
-    } catch {
-      return 'Unknown date';
+      return formatDistanceToNow(new Date(dateStr), { addSuffix: true });
+    } catch (error) {
+      console.error('Error formatting date:', error);
+      return dateStr;
+    }
+  };
+
+  const markAllAsRead = async () => {
+    try {
+      if (process.env.NODE_ENV === 'production') {
+        await notificationService.markAllAsRead();
+      }
+      
+      setNotifications(notifications.map(notification => ({
+        ...notification,
+        read: true
+      })));
+      
+      toast.success('All notifications marked as read');
+    } catch (error) {
+      console.error('Error marking all notifications as read:', error);
+      toast.error('Failed to mark notifications as read');
+    }
+  };
+
+  const deleteNotification = async (id: string) => {
+    try {
+      if (process.env.NODE_ENV === 'production') {
+        await notificationService.deleteNotification(id);
+      }
+      
+      setNotifications(notifications.filter(n => n.id !== id));
+      toast.success('Notification deleted');
+    } catch (error) {
+      console.error('Error deleting notification:', error);
+      toast.error('Failed to delete notification');
+    }
+  };
+
+  const markAsRead = async (id: string) => {
+    try {
+      if (process.env.NODE_ENV === 'production') {
+        await notificationService.markAsRead(id);
+      }
+      
+      setNotifications(notifications.map(notification =>
+        notification.id === id
+          ? { ...notification, read: true }
+          : notification
+      ));
+      
+      toast.success('Notification marked as read');
+    } catch (error) {
+      console.error('Error marking notification as read:', error);
+      toast.error('Failed to mark notification as read');
+    }
+  };
+
+  const getIconByType = (type: string) => {
+    switch (type.toLowerCase()) {
+      case 'message':
+        return <MessageCircle className="h-4 w-4" />;
+      case 'appointment':
+        return <Clock className="h-4 w-4" />;
+      case 'journal':
+        return <FileText className="h-4 w-4" />;
+      default:
+        return <Bell className="h-4 w-4" />;
     }
   };
 
@@ -267,91 +236,6 @@ export default function NotificationsPage() {
   
   // Count unread notifications
   const unreadCount = notifications.filter(n => !n.read).length;
-  
-  // Mark all as read
-  const markAllAsRead = async () => {
-    try {
-      // Update local state first for responsive UI
-      setNotifications(notifications.map(n => ({ ...n, read: true })));
-      
-      // Update read status in database for real notifications (not welcome notification)
-      if (user?.id && process.env.NODE_ENV === 'production') {
-        const { error } = await supabase
-          .from('notifications')
-          .update({ 
-            read: true,
-            updated_at: new Date().toISOString()
-            })
-            .eq('user_id', user.id)
-          .eq('read', false);
-          
-        if (error) throw error;
-      }
-    } catch (error) {
-      console.error('Error marking all notifications as read:', error);
-    }
-  };
-
-  // Delete notification
-  const deleteNotification = async (id: string) => {
-    try {
-      // Update UI first
-      setNotifications(notifications.filter(n => n.id !== id));
-      
-      // Skip database operation for welcome notification or in development
-      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') return;
-      
-      // Delete from database
-      const { error } = await supabase
-        .from('notifications')
-        .delete()
-        .eq('id', id);
-        
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error deleting notification:', error);
-    }
-  };
-
-  // Mark as read
-  const markAsRead = async (id: string) => {
-    try {
-      // Update local state first
-      setNotifications(notifications.map(n => 
-        n.id === id ? { ...n, read: true } : n
-      ));
-      
-      // Skip database operation for welcome notification or in development
-      if (id === 'welcome-1' || process.env.NODE_ENV !== 'production') return;
-      
-      // Update in database
-      const { error } = await supabase
-        .from('notifications')
-        .update({ 
-          read: true,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', id);
-        
-      if (error) throw error;
-    } catch (error) {
-      console.error('Error marking notification as read:', error);
-    }
-  };
-
-  const getIconByType = (type: string) => {
-    switch (type) {
-      case "message":
-        return <MessageCircle className="h-5 w-5 text-blue-600" />;
-      case "appointment":
-        return <Clock className="h-5 w-5 text-purple-600" />;
-      case "journal":
-        return <FileText className="h-5 w-5 text-green-600" />;
-      case "system":
-      default:
-        return <Bell className="h-5 w-5 text-gray-600" />;
-    }
-  };
 
   return (
     <DashboardLayout>

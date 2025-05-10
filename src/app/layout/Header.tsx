@@ -7,7 +7,7 @@ import { useAuth } from "@/hooks/use-auth";
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const { user, isAuthenticated, isAuthenticating, getDashboardUrl, signout } = useAuth();
+  const { user, isAuthenticated, isAuthenticating, getDashboardUrlForRole, signout } = useAuth();
   const navigate = useNavigate();
   const isMobile = useMediaQuery("(max-width: 768px)");
 
@@ -24,7 +24,7 @@ const Header = () => {
 
   const handleDashboardClick = (e: React.MouseEvent) => {
     e.preventDefault();
-    const url = getDashboardUrl();
+    const url = getDashboardUrlForRole(user?.role || null);
     console.log('Header: Dashboard button clicked, navigating to:', url);
     navigate(url);
     setIsMenuOpen(false);
@@ -51,7 +51,7 @@ const Header = () => {
               <Link to="/" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Home</Link>
               <Link to="/therapists" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Therapists</Link>
               <Link to="/journal" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Journal</Link>
-              <Link to="/ambassadors" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Mental Health Ambassadors</Link>
+              <Link to="/mood-mentors" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Mood Mentors</Link>
               <Link to="/resource-center" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Resource Center</Link>
               <Link to="/help-groups" className="text-white/90 hover:text-white transition-colors text-sm lg:text-base">Help Groups</Link>
             </nav>
@@ -128,11 +128,11 @@ const Header = () => {
                 Journal
               </Link>
               <Link 
-                to="/ambassadors" 
+                to="/mood-mentors" 
                 className="text-white/90 hover:text-white transition-colors px-3 py-2 rounded-lg hover:bg-white/10 text-sm"
                 onClick={() => setIsMenuOpen(false)}
               >
-                Mental Health Ambassadors
+                Mood Mentors
               </Link>
               <Link 
                 to="/resource-center" 

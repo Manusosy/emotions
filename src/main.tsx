@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import './styles/index.css';
+import { AuthProvider } from './hooks/use-auth';
 
 // Global error handling with more detailed logging
 window.addEventListener('error', (event) => {
@@ -26,8 +27,6 @@ window.addEventListener('unhandledrejection', (event) => {
 // Enhanced production logging
 if (import.meta.env.PROD) {
   console.log('Environment:', {
-    VITE_SUPABASE_URL: import.meta.env.VITE_SUPABASE_URL ? '✓' : '✗',
-    VITE_SUPABASE_ANON_KEY: import.meta.env.VITE_SUPABASE_ANON_KEY ? '✓' : '✗',
     MODE: import.meta.env.MODE,
     BASE_URL: import.meta.env.BASE_URL
   });
@@ -56,7 +55,9 @@ try {
     <React.StrictMode>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <App />
+          <AuthProvider>
+            <App />
+          </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>
     </React.StrictMode>

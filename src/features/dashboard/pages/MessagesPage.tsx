@@ -7,15 +7,26 @@ import { MessageBubble } from "@/components/messaging/MessageBubble";
 import { ConversationList, ConversationItem, ConversationUser } from "@/components/messaging/ConversationList";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAuth } from "@/hooks/use-auth";
-import { messageService, ChatMessage } from "@/integrations/supabase/services/message.service";
-import { userService } from "@/integrations/supabase/services/user.service";
+import { messageService, ChatMessage } from "@/services/messageService";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Loader2, Search, Send, MessageSquare, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { api } from "@/lib/api";
+import { fetchWithErrorHandling } from "@/utils/error-handling";
+import { errorLog, devLog } from "@/utils/environment";
 
 // Import the dashboard layout component
 import DashboardLayout from "../components/DashboardLayout";
+
+// Define the UserProfile interface
+interface UserProfile {
+  full_name: string;
+  avatar_url?: string;
+  id: string;
+  email?: string;
+  role?: string;
+}
 
 // The main difference from the ambassador version is focused on connecting with ambassadors
 // rather than patients, and some UI elements are tailored for patients
@@ -39,6 +50,7 @@ export default function MessagesPage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState("all");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const subscriptionIdRef = useRef<string | null>(null);
   
   // Load conversations
   useEffect(() => {
@@ -47,6 +59,8 @@ export default function MessagesPage() {
       
       try {
         setIsLoading(true);
+        devLog('Fetching conversations for user:', user.id);
+        
         const conversationsData = await messageService.getConversations(user.id);
         
         // Format conversations for UI
@@ -58,7 +72,13 @@ export default function MessagesPage() {
             
             try {
               // Get other user's data
-              const { data: otherUser, error } = await userService.getUserProfile(otherUserId);
+              const { data: otherUser, error } = await fetchWithErrorHandling<UserProfile>(
+                () => api.get(`/api/users/${otherUserId}/profile`),
+                {
+                  defaultErrorMessage: 'Failed to fetch user profile',
+                  showErrorToast: false
+                }
+              );
               
               if (error) throw error;
               
@@ -80,7 +100,7 @@ export default function MessagesPage() {
                 }
               };
             } catch (error) {
-              console.error("Error fetching user profile:", error);
+              errorLog("Error fetching user profile:", error);
               const userRole = isPatient ? 'ambassador' as const : 'patient' as const;
               
               return {
@@ -107,7 +127,7 @@ export default function MessagesPage() {
           handleSelectConversation(formattedConversations[0].id);
         }
       } catch (error) {
-        console.error("Error loading conversations:", error);
+        errorLog("Error loading conversations:", error);
         toast.error("Failed to load conversations");
       } finally {
         setIsLoading(false);
@@ -163,34 +183,48 @@ export default function MessagesPage() {
         return c;
       }));
       
+      // Clean up previous subscription if exists
+      if (subscriptionIdRef.current && user) {
+        messageService.unsubscribeFromConversation(
+          subscriptionIdRef.current,
+          activeConversationId || "",
+          user.id
+        );
+        subscriptionIdRef.current = null;
+      }
+      
       // Subscribe to new messages for this conversation
-      const subscription = messageService.subscribeToConversation(
-        conversationId,
-        (payload) => {
-          const newMessage = payload.new;
+      if (user) {
+        const handleNewMessage = (data: ChatMessage[]) => {
+          if (!data || data.length === 0) return;
           
-          // Add new message to the UI
-          setMessages(prevMessages => {
-            const messageExists = prevMessages.some(msg => msg.id === newMessage.id);
-            if (messageExists) return prevMessages;
-            
-            // Mark as read if you are the recipient
-            if (newMessage.recipient_id === user?.id && user) {
-              messageService.markAsRead(conversationId, user.id);
-            }
-            
-            return [
-              ...prevMessages,
-              {
-                id: newMessage.id,
-                content: newMessage.content,
-                timestamp: newMessage.created_at,
-                isCurrentUser: newMessage.sender_id === user?.id,
-                senderName: newMessage.sender_id === user?.id ? "You" : otherUserData?.name || "Ambassador",
-                read: newMessage.read
-              }
-            ];
-          });
+          // Find messages that aren't already in the state
+          const newMessages = data.filter(newMsg => 
+            !messages.some(existingMsg => existingMsg.id === newMsg.id)
+          );
+          
+          if (newMessages.length === 0) return;
+          
+          // Get the most recent message for UI updates
+          const latestMessage = newMessages[newMessages.length - 1];
+          
+          // Mark as read if you are the recipient
+          if (latestMessage.recipient_id === user?.id) {
+            messageService.markAsRead(conversationId, user.id);
+          }
+          
+          // Add new messages to the UI
+          setMessages(prevMessages => [
+            ...prevMessages,
+            ...newMessages.map(newMsg => ({
+              id: newMsg.id,
+              content: newMsg.content,
+              timestamp: newMsg.created_at,
+              isCurrentUser: newMsg.sender_id === user?.id,
+              senderName: newMsg.sender_id === user?.id ? "You" : otherUserData?.name || "Ambassador",
+              read: newMsg.read || newMsg.recipient_id !== user?.id // Messages sent by user are considered read
+            }))
+          ]);
           
           // Update the conversation list
           setConversations(prevConversations => {
@@ -199,25 +233,30 @@ export default function MessagesPage() {
                 return {
                   ...convo,
                   lastMessage: {
-                    content: newMessage.content,
-                    timestamp: newMessage.created_at,
-                    unread: newMessage.read === false && 
-                            newMessage.recipient_id === user?.id
+                    content: latestMessage.content,
+                    timestamp: latestMessage.created_at,
+                    unread: latestMessage.read === false && 
+                            latestMessage.recipient_id === user?.id
                   }
                 };
               }
               return convo;
             });
           });
-        }
-      );
+        };
+        
+        // Subscribe to conversation updates
+        subscriptionIdRef.current = messageService.subscribeToConversation(
+          conversationId,
+          user.id,
+          handleNewMessage
+        );
+        
+        devLog('Subscribed to conversation:', conversationId, 'with ID:', subscriptionIdRef.current);
+      }
       
-      // Clean up subscription when changing conversations
-      return () => {
-        subscription.unsubscribe();
-      };
     } catch (error) {
-      console.error("Error loading messages:", error);
+      errorLog("Error loading messages:", error);
       toast.error("Failed to load messages");
     } finally {
       setIsLoadingMessages(false);
@@ -234,7 +273,7 @@ export default function MessagesPage() {
       const convo = conversations.find(c => c.id === activeConversationId);
       if (!convo) return;
       
-      await messageService.sendMessage(
+      const sentMessage = await messageService.sendMessage(
         activeConversationId,
         user.id,
         convo.otherUser.id,
@@ -244,18 +283,61 @@ export default function MessagesPage() {
       // Clear the input
       setMessageText("");
       
+      // Since the subscription might have a delay, optimistically add the message to the UI
+      if (sentMessage) {
+        setMessages(prev => [
+          ...prev,
+          {
+            id: sentMessage.id,
+            content: sentMessage.content,
+            timestamp: sentMessage.created_at,
+            isCurrentUser: true,
+            senderName: "You",
+            read: true
+          }
+        ]);
+        
+        // Update the conversation list
+        setConversations(prev => prev.map(c => {
+          if (c.id === activeConversationId) {
+            return {
+              ...c,
+              lastMessage: {
+                content: sentMessage.content,
+                timestamp: sentMessage.created_at,
+                unread: false
+              }
+            };
+          }
+          return c;
+        }));
+      }
+      
     } catch (error) {
-      console.error("Error sending message:", error);
+      errorLog("Error sending message:", error);
       toast.error("Failed to send message");
     }
   };
   
-  // Filter conversations based on search query and tab
-  const filteredConversations = conversations.filter(convo => {
-    const matchesSearch = convo.otherUser.name.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesTab = activeTab === "all" || (activeTab === "unread" && convo.lastMessage.unread);
-    return matchesSearch && matchesTab;
-  });
+  // Cleanup subscription on unmount
+  useEffect(() => {
+    return () => {
+      if (subscriptionIdRef.current && user && activeConversationId) {
+        messageService.unsubscribeFromConversation(
+          subscriptionIdRef.current,
+          activeConversationId,
+          user.id
+        );
+        subscriptionIdRef.current = null;
+        devLog('Unsubscribed from conversation on unmount');
+      }
+    };
+  }, [user, activeConversationId]);
+  
+  // Filter conversations based on search query
+  const filteredConversations = conversations.filter(convo => 
+    convo.otherUser.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
   
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -371,7 +453,7 @@ export default function MessagesPage() {
                             content={message.content}
                             timestamp={message.timestamp}
                             isCurrentUser={message.isCurrentUser}
-                            avatarUrl={message.isCurrentUser ? user?.user_metadata?.avatar_url : otherUserData?.avatarUrl}
+                            avatarUrl={(message.isCurrentUser && user?.avatar_url) || otherUserData?.avatarUrl}
                             senderName={message.senderName}
                             read={message.read}
                           />

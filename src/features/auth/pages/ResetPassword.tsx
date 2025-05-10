@@ -1,66 +1,75 @@
-import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import AuthLayout from "../components/AuthLayout";
-import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { Lock } from "lucide-react";
+import { useState, useEffect } from 'react';
+import { KeyRound, Check } from 'lucide-react';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import { Spinner } from '@/components/ui/spinner';
+import { PasswordInput } from '../components/PasswordInput';
+import AuthLayout from '../components/AuthLayout';
+import { useAuth } from '@/hooks/use-auth';
 
 export default function ResetPassword() {
-  const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [token, setToken] = useState('');
+  const [errors, setErrors] = useState<{ password?: string; confirmPassword?: string; token?: string }>({});
+  const [isSubmitted, setIsSubmitted] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState("");
+  const { resetPassword } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
+  // Extract token from URL query parameter
   useEffect(() => {
-    // Check if we have a session and are in the correct context
-    const checkSession = async () => {
-      const { data } = await supabase.auth.getSession();
-      // If not in a reset password flow, redirect to login
-      if (!data.session) {
-        toast.error("Invalid or expired reset link. Please try again.");
-        navigate('/forgot-password');
-      }
-    };
+    const searchParams = new URLSearchParams(location.search);
+    const tokenFromUrl = searchParams.get('token');
+    if (tokenFromUrl) {
+      setToken(tokenFromUrl);
+    } else {
+      setErrors({ token: 'Reset token is missing. Please check your reset link.' });
+    }
+  }, [location.search]);
 
-    checkSession();
-  }, [navigate]);
+  const validateForm = () => {
+    const newErrors: { password?: string; confirmPassword?: string; token?: string } = {};
+    let isValid = true;
+
+    if (!password) {
+      newErrors.password = 'Password is required';
+      isValid = false;
+    } else if (password.length < 8) {
+      newErrors.password = 'Password must be at least 8 characters';
+      isValid = false;
+    }
+
+    if (password !== confirmPassword) {
+      newErrors.confirmPassword = 'Passwords do not match';
+      isValid = false;
+    }
+
+    if (!token) {
+      newErrors.token = 'Reset token is missing';
+      isValid = false;
+    }
+
+    setErrors(newErrors);
+    return isValid;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError("");
-    
-    if (password !== confirmPassword) {
-      setError("Passwords do not match");
-      return;
-    }
 
-    if (password.length < 8) {
-      setError("Password must be at least 8 characters");
-      return;
-    }
+    if (!validateForm()) return;
 
     setIsLoading(true);
-
     try {
-      const { error } = await supabase.auth.updateUser({
-        password,
-      });
-
-      if (error) throw error;
-      
-      toast.success("Password updated successfully");
-      
-      // Short delay before redirecting to login
-      setTimeout(() => {
-        navigate('/login');
-      }, 1500);
-    } catch (error: any) {
-      console.error('Password reset error:', error);
-      setError(error.message || "Failed to reset password. Please try again.");
+      const success = await resetPassword(token, password);
+      if (success) {
+        setIsSubmitted(true);
+      }
+    } catch (error) {
+      console.error('Error resetting password:', error);
+      setErrors({ token: 'Something went wrong. The token may be invalid or expired.' });
     } finally {
       setIsLoading(false);
     }
@@ -68,59 +77,69 @@ export default function ResetPassword() {
 
   return (
     <AuthLayout 
-      title="Create New Password" 
-      subtitle="Enter and confirm your new password"
+      title="Set New Password" 
+      subtitle="Create a new password for your account"
+      icon={<KeyRound className="w-6 h-6" />}
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="password">New Password</Label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
+      {isSubmitted ? (
+        <div className="text-center py-8 space-y-4">
+          <div className="mx-auto w-12 h-12 rounded-full bg-green-100 flex items-center justify-center">
+            <Check className="w-6 h-6 text-green-600" />
+          </div>
+          <p className="text-lg font-semibold text-green-600">Password Reset Successful!</p>
+          <p className="text-gray-600">
+            Your password has been reset successfully. You can now use your new password to sign in.
+          </p>
+          <div className="mt-6">
+            <Button onClick={() => navigate('/login')} className="w-full">
+              Go to Login
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4">
+          {errors.token && (
+            <div className="p-3 rounded-md bg-red-50 border border-red-200 text-red-600 text-sm">
+              {errors.token}
+            </div>
+          )}
+          
+          <div className="space-y-2">
+            <Label htmlFor="password">New Password</Label>
+            <PasswordInput 
               id="password"
-              type="password"
-              placeholder="Enter new password"
-              className="pl-10"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              required
-              disabled={isLoading}
+              error={errors.password}
+              placeholder="Enter new password"
             />
           </div>
-        </div>
-        
-        <div className="space-y-2">
-          <Label htmlFor="confirm-password">Confirm Password</Label>
-          <div className="relative">
-            <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              id="confirm-password"
-              type="password"
-              placeholder="Confirm new password"
-              className="pl-10"
+          
+          <div className="space-y-2">
+            <Label htmlFor="confirmPassword">Confirm Password</Label>
+            <PasswordInput 
+              id="confirmPassword"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
-              required
-              disabled={isLoading}
+              error={errors.confirmPassword}
+              placeholder="Confirm new password"
             />
           </div>
-        </div>
-
-        {error && (
-          <div className="bg-red-50 p-3 rounded-md border border-red-200">
-            <p className="text-red-800 text-sm">{error}</p>
+          
+          <Button type="submit" className="w-full" disabled={isLoading || !!errors.token}>
+            {isLoading ? <Spinner size="sm" className="mr-2" /> : null}
+            Reset Password
+          </Button>
+          
+          <div className="text-center mt-4">
+            <p className="text-sm text-gray-600">
+              <Link to="/login" className="text-primary font-medium hover:underline">
+                Back to Login
+              </Link>
+            </p>
           </div>
-        )}
-
-        <Button 
-          type="submit" 
-          className="w-full mt-6" 
-          disabled={isLoading}
-          variant="brand"
-        >
-          {isLoading ? "Updating..." : "Update Password"}
-        </Button>
-      </form>
+        </form>
+      )}
     </AuthLayout>
   );
 } 

@@ -3,8 +3,9 @@ import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/integrations/supabase/client";
 import { Skeleton } from "@/components/ui/skeleton";
+import { api } from "@/lib/api";
+import { errorLog } from "@/utils/environment";
 import { 
   Settings,
   User,
@@ -47,7 +48,20 @@ export default function Profile() {
           return;
         }
 
-        // Create profile from user metadata
+        // Fetch profile data from API
+        const response = await api.get(`/api/patients/${user.id}/profile`);
+        
+        if (!response.ok) {
+          throw new Error('Failed to fetch profile data');
+        }
+        
+        const profileData = await response.json();
+        setProfile(profileData);
+      } catch (error) {
+        errorLog('Error fetching profile:', error);
+        
+        // Fallback to creating profile from user metadata if API fails
+        if (user) {
         const userProfile: UserProfile = {
           id: user.id,
           patient_id: user.user_metadata?.patient_id || 'EMHA01P',
@@ -67,8 +81,7 @@ export default function Profile() {
         };
 
         setProfile(userProfile);
-      } catch (error: any) {
-        console.error('Error fetching profile:', error);
+        }
       } finally {
         setIsLoading(false);
       }
@@ -410,38 +423,6 @@ export default function Profile() {
                         </div>
                       </div>
                     </div>
-                    <div className="mt-6 pt-4 border-t">
-                      <h3 className="text-lg font-medium mb-4">Recent Activity</h3>
-                      <div className="space-y-3">
-                        <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
-                          <div className="bg-blue-100 p-2 rounded-full">
-                            <Calendar className="h-4 w-4 text-blue-500" />
-                          </div>
-                          <div>
-                            <p className="font-medium">Last appointment</p>
-                            <p className="text-sm text-slate-500">2 weeks ago</p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
-                          <div className="bg-purple-100 p-2 rounded-full">
-                            <Users className="h-4 w-4 text-purple-500" />
-                          </div>
-                          <div>
-                            <p className="font-medium">Community engagement</p>
-                            <p className="text-sm text-slate-500">Participated in 2 community discussions</p>
-                          </div>
-                        </div>
-                        <div className="flex items-start gap-3 p-3 rounded-lg bg-slate-50">
-                          <div className="bg-amber-100 p-2 rounded-full">
-                            <FileText className="h-4 w-4 text-amber-500" />
-                          </div>
-                          <div>
-                            <p className="font-medium">Resource downloads</p>
-                            <p className="text-sm text-slate-500">Downloaded 5 mental health resources</p>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -456,56 +437,47 @@ export default function Profile() {
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="py-6">
-                    <div className="space-y-6">
-                      <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50">
+                    <div className="space-y-8">
+                      <div className="flex items-center justify-between">
                         <div>
-                          <h3 className="font-medium">Profile Visibility</h3>
-                          <p className="text-sm text-slate-500">Control who can see your profile information</p>
+                          <h3 className="font-medium">Change Password</h3>
+                          <p className="text-sm text-slate-500 mt-1">Update your account password for better security</p>
+                        </div>
+                        <Button 
+                          onClick={() => navigate('/patient-dashboard/settings/password')}
+                          className="bg-[#20C0F3] hover:bg-[#20C0F3]/90 text-white"
+                        >
+                          Change Password
+                        </Button>
+                      </div>
+                      <div className="border-t pt-8">
+                        <h3 className="font-medium mb-6">Data Privacy</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50">
+                            <div className="bg-[#20C0F3]/10 p-2 rounded-full">
+                              <Shield className="h-5 w-5 text-[#20C0F3]" />
                         </div>
                         <div>
-                          <select className="border rounded px-3 py-1.5 text-sm">
-                            <option>Only me</option>
-                            <option selected>My care team</option>
-                            <option>Community members</option>
-                          </select>
+                              <p className="text-sm text-muted-foreground">Data Protection</p>
+                              <p className="font-medium">Active</p>
                         </div>
                       </div>
-                      <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50">
-                        <div>
-                          <h3 className="font-medium">Data Sharing</h3>
-                          <p className="text-sm text-slate-500">Control how your health data is shared</p>
+                          <div className="flex items-center gap-3 p-4 rounded-lg bg-slate-50">
+                            <div className="bg-[#20C0F3]/10 p-2 rounded-full">
+                              <FileText className="h-5 w-5 text-[#20C0F3]" />
                         </div>
                         <div>
-                          <select className="border rounded px-3 py-1.5 text-sm">
-                            <option>Don't share</option>
-                            <option selected>Share with my care team only</option>
-                            <option>Share anonymized data for research</option>
-                          </select>
-                        </div>
-                      </div>
-                      <div className="flex items-center justify-between p-4 rounded-lg bg-slate-50">
-                        <div>
-                          <h3 className="font-medium">Two-Factor Authentication</h3>
-                          <p className="text-sm text-slate-500">Add an extra layer of security to your account</p>
-                        </div>
-                        <div>
-                          <Button variant="outline" size="sm">
-                            Enable
+                              <p className="text-sm text-muted-foreground">Privacy Policy</p>
+                              <Button 
+                                variant="link" 
+                                size="sm" 
+                                className="p-0 h-auto font-medium text-[#20C0F3]"
+                                onClick={() => navigate('/privacy-policy')}
+                              >
+                                View Privacy Policy
                           </Button>
                         </div>
                       </div>
-                      <div className="pt-4 border-t">
-                        <h3 className="text-lg font-medium mb-4">Data & Privacy</h3>
-                        <div className="flex flex-col gap-4">
-                          <Button variant="link" className="justify-start p-0 h-auto text-left w-fit">
-                            Download your data
-                          </Button>
-                          <Button variant="link" className="justify-start p-0 h-auto text-left w-fit">
-                            View privacy policy
-                          </Button>
-                          <Button variant="link" className="justify-start p-0 h-auto text-left w-fit">
-                            Cookie preferences
-                          </Button>
                         </div>
                       </div>
                     </div>
@@ -514,11 +486,7 @@ export default function Profile() {
               </TabsContent>
             </Tabs>
           </div>
-        ) : (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">Profile not found</p>
-          </div>
-        )}
+        ) : null}
       </div>
     </DashboardLayout>
   );

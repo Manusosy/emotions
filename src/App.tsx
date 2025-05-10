@@ -4,24 +4,20 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { BrowserRouter, Routes, Route, useLocation, Navigate, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
 import MoodTracker from "@/features/mood-tracking/pages/MoodTracker";
-import Login from "@/features/auth/pages/Login";
-import Signup from "@/features/auth/pages/Signup";
-import ForgotPassword from "@/features/auth/pages/ForgotPassword";
-import ResetPassword from "@/features/auth/pages/ResetPassword";
 import NotFound from "./pages/NotFound";
-import JournalPage from "@/features/journal/pages/JournalPage";
+import Journal from "@/pages/Journal";
 import DashboardJournalPage from "@/features/dashboard/pages/JournalPage";
 import NotificationsPage from "@/features/dashboard/pages/NotificationsPage";
-import AmbassadorNotificationsPage from "@/features/ambassadors/pages/NotificationsPage";
+import MoodMentorNotificationsPage from "@/features/mood-mentors/pages/NotificationsPage";
 import MoodTrackerPage from "@/features/dashboard/pages/MoodTrackerPage";
 import ReportsPage from "@/features/dashboard/pages/ReportsPage";
 import Footer from "@/components/layout/Footer";
 import ContactBanner from "@/components/layout/ContactBanner";
-import Ambassadors from "@/features/ambassadors/pages/Ambassadors";
-import AppointmentsPage from "@/features/ambassadors/pages/AppointmentsPage";
-import PatientsPage from "@/features/ambassadors/pages/PatientsPage";
-import GroupsPage from "@/features/ambassadors/pages/GroupsPage";
-import ResourcesPage from "@/features/ambassadors/pages/ResourcesPage";
+import MoodMentors from "@/features/mood-mentors/pages/MoodMentors";
+import MoodMentorAppointmentsPage from "@/features/mood-mentors/pages/AppointmentsPage";
+import PatientsPage from "@/features/mood-mentors/pages/PatientsPage";
+import GroupsPage from "@/features/mood-mentors/pages/GroupsPage";
+import MoodMentorResourcesPage from "@/features/mood-mentors/pages/ResourcesPage";
 import DashboardResourcesPage from "@/features/dashboard/pages/ResourcesPage";
 import BookingPage from "@/features/booking/pages/BookingPage";
 import PatientDashboard from "@/features/dashboard/pages/PatientDashboard";
@@ -33,8 +29,7 @@ import DeleteAccount from "@/features/dashboard/pages/DeleteAccount";
 import { toast } from "sonner";
 import Navbar from "@/components/layout/Navbar";
 import ComingSoon from '@/components/ComingSoon';
-import AmbassadorDashboard from "@/features/dashboard/pages/AmbassadorDashboard";
-import { useAuth } from "@/hooks/use-auth";
+import MoodMentorDashboard from "@/features/mood-mentors/pages/MoodMentorDashboard";
 import Header from "@/app/layout/Header";
 import Resources from "@/pages/Resources";
 import HelpGroups from "./pages/HelpGroups";
@@ -44,9 +39,9 @@ import TermsOfService from "./pages/TermsOfService";
 import Contact from "./pages/Contact";
 import FAQs from "./pages/FAQs";
 import About from "./pages/About";
-import AmbassadorProfile from "@/features/ambassadors/pages/AmbassadorProfile";
-import ReviewsPage from "@/features/ambassadors/pages/ReviewsPage";
-import AvailabilityPage from "@/features/ambassadors/pages/AvailabilityPage";
+import MoodMentorProfile from "@/features/mood-mentors/pages/MoodMentorProfile";
+import ReviewsPage from "@/features/mood-mentors/pages/ReviewsPage";
+import AvailabilityPage from "@/features/mood-mentors/pages/AvailabilityPage";
 import './styles/App.css';
 import { Spinner } from "@/components/ui/spinner";
 import JournalEntryPage from "@/features/journal/pages/JournalEntryPage";
@@ -55,16 +50,17 @@ import ErrorBoundary from "@/components/ErrorBoundary";
 import { Button } from "@/components/ui/button";
 import HelpCenterPage from "@/features/dashboard/pages/HelpCenterPage";
 import MessagesPage from "@/features/dashboard/pages/MessagesPage";
-import AmbassadorMessagesPage from "@/features/ambassadors/pages/MessagesPage";
+import MoodMentorMessagesPage from "@/features/mood-mentors/pages/MessagesPage";
 import ScrollToTop from "@/components/layout/ScrollToTop";
-import SettingsPage from "@/features/ambassadors/pages/SettingsPage";
-import ProfilePage from "@/features/ambassadors/pages/ProfilePage";
-import DeleteAccountPage from "@/features/ambassadors/pages/DeleteAccountPage";
-import { profileService } from "@/integrations/supabase/services/profile.service";
-import { ambassadorService } from "@/integrations/supabase/services/ambassador.service";
-
-// Type definition for UserRole
-type UserRole = 'patient' | 'ambassador' | 'admin';
+import SettingsPage from "@/features/mood-mentors/pages/SettingsPage";
+import ProfilePage from "@/features/mood-mentors/pages/ProfilePage";
+import DeleteAccountPage from "@/features/mood-mentors/pages/DeleteAccountPage";
+import { profileService } from "@/lib/profileService";
+import { moodMentorService } from "@/lib/moodMentorService";
+import { Login, Signup, ForgotPassword, ResetPassword } from '@/features/auth/pages';
+import { useAuth } from '@/hooks/use-auth';
+import { UserRole } from '@/types/database.types';
+import { devLog, errorLog } from '@/utils/environment';
 
 // Type definition for ProtectedRoute props
 interface ProtectedRouteProps {
@@ -82,9 +78,9 @@ const HomePage = () => {
 };
 
 // DashboardErrorFallback component to provide context-aware error handling
-const DashboardErrorFallback = ({ dashboardType }: { dashboardType: 'patient' | 'ambassador' }) => {
+const DashboardErrorFallback = ({ dashboardType }: { dashboardType: 'patient' | 'mood_mentor' }) => {
   const navigate = useNavigate();
-  const dashboardPath = dashboardType === 'patient' ? '/patient-dashboard' : '/ambassador-dashboard';
+  const dashboardPath = dashboardType === 'patient' ? '/patient-dashboard' : '/mood-mentor-dashboard';
   
   return (
     <div className="flex flex-col items-center justify-center h-full min-h-[50vh] p-6 text-center">
@@ -113,83 +109,43 @@ const ProtectedRoute = ({
 }: ProtectedRouteProps) => {
   const navigate = useNavigate();
   const { pathname } = useLocation();
-  const [hasCheckedAuth, setHasCheckedAuth] = useState(false);
-  const [isAuthorized, setIsAuthorized] = useState(false);
   const { isAuthenticated, userRole, isLoading, getDashboardUrlForRole } = useAuth();
+  const [isAuthorized, setIsAuthorized] = useState(false);
 
   const effectiveAllowedRoles = requiredRole ? [requiredRole] : allowedRoles;
 
-  // Check for stored auth state first
-  useEffect(() => {
-    // Attempt to get stored auth data from localStorage
-    const storedAuthState = localStorage.getItem('auth_state');
-    if (storedAuthState) {
-      try {
-        const { isAuthenticated: storedAuth, userRole: storedRole } = JSON.parse(storedAuthState);
-        
-        if (storedAuth && storedRole) {
-          console.log(`Found stored auth state with role: ${storedRole}`);
-          // If the stored role matches our required role, we can bypass the auth check
-          const hasRequiredRole = 
-            effectiveAllowedRoles.length === 0 || 
-            effectiveAllowedRoles.includes(storedRole as UserRole);
-            
-          if (hasRequiredRole) {
-            console.log("User has required role based on stored auth state");
-            setIsAuthorized(true);
-            setHasCheckedAuth(true);
-          }
-        }
-      } catch (e) {
-        console.error("Error parsing stored auth state:", e);
-      }
-    }
-  }, [effectiveAllowedRoles]);
-
   useEffect(() => {
     const checkAuth = async () => {
-      // Skip if we've already authorized based on stored state
-      if (hasCheckedAuth && isAuthorized) return;
-      
-      console.log(
-        `Checking auth for path: ${pathname}, isAuthenticated: ${isAuthenticated}, userRole: ${userRole}, allowedRoles:`,
-        effectiveAllowedRoles
-      );
-
       // Wait until authentication check is complete
       if (isLoading) return;
 
+      // If not authenticated, redirect to login
       if (!isAuthenticated) {
-        console.log("User not authenticated, redirecting to login");
+        devLog("User not authenticated, redirecting to login");
         const loginPath = `/login?redirect=${encodeURIComponent(pathname)}`;
-        // Use direct window.location for consistent behavior and to prevent React Router state issues
-        window.location.href = loginPath;
+        navigate(loginPath, { replace: true });
         return;
       }
 
-      // If no specific roles are required or user has required role
+      // Check if user has the required role
       const hasRequiredRole =
         effectiveAllowedRoles.length === 0 || (userRole && effectiveAllowedRoles.includes(userRole as UserRole));
 
       if (!hasRequiredRole) {
-        console.log(
-          `User does not have required role. Current role: ${userRole}, required roles:`,
-          effectiveAllowedRoles
-        );
+        devLog(`User does not have required role. Current role: ${userRole}, required roles:`, effectiveAllowedRoles);
         // Redirect to appropriate dashboard based on role
         const dashboardPath = getDashboardUrlForRole(userRole);
-        // Use direct window.location for consistent behavior
-        window.location.href = dashboardPath;
+        navigate(dashboardPath, { replace: true });
         return;
       }
 
       // User is authenticated and authorized
+      devLog("User authorized for route:", pathname);
       setIsAuthorized(true);
-      setHasCheckedAuth(true);
     };
 
     checkAuth();
-  }, [isAuthenticated, userRole, pathname, effectiveAllowedRoles, navigate, isLoading, getDashboardUrlForRole, hasCheckedAuth, isAuthorized]);
+  }, [isAuthenticated, userRole, pathname, effectiveAllowedRoles, navigate, isLoading, getDashboardUrlForRole]);
 
   if (isLoading) {
     return (
@@ -201,7 +157,7 @@ const ProtectedRoute = ({
   }
 
   // Wrap the children in an ErrorBoundary with the appropriate dashboard path
-  const dashboardPath = requiredRole === 'patient' ? '/patient-dashboard' : '/ambassador-dashboard';
+  const dashboardPath = requiredRole ? getDashboardUrlForRole(requiredRole) : '/';
   
   return isAuthorized ? (
     <ErrorBoundary dashboardPath={dashboardPath}>
@@ -219,7 +175,7 @@ const AppContent = () => {
       const target = e.target as HTMLElement;
       const isAnchor = target.tagName === 'A' || target.closest('a');
       if (isAnchor) {
-        console.log("Link clicked:", target);
+        devLog("Link clicked:", target);
       }
     };
 
@@ -228,18 +184,18 @@ const AppContent = () => {
   }, []);
 
   useEffect(() => {
-    console.log("Current location:", location.pathname);
+    devLog("Current location:", location.pathname);
   }, [location.pathname]);
 
   useEffect(() => {
     const pathname = location.pathname;
     const isDashboardPage = pathname.includes('dashboard') || 
                           pathname.includes('admin') ||
-                          pathname === '/ambassador-dashboard' ||
-                          pathname.startsWith('/ambassador-dashboard/');
+                          pathname === '/mood-mentor-dashboard' ||
+                          pathname.startsWith('/mood-mentor-dashboard/');
     
     setShowHeaderFooter(!isDashboardPage);
-    console.log('Current path:', pathname, 'Show header/footer:', !isDashboardPage);
+    devLog('Current path:', pathname, 'Show header/footer:', !isDashboardPage);
   }, [location.pathname]);
 
   const shouldShowContactBanner = location.pathname === "/" || 
@@ -261,13 +217,18 @@ const AppContent = () => {
             <Routes key={location.pathname}>
               {/* Public routes */}
               <Route path="/" element={<HomePage />} />
+              
+              {/* Authentication Routes */}
               <Route path="/login" element={<Login />} />
-              <Route path="/signup" element={<Signup />} />
+              <Route path="/login/:role" element={<Login />} />
+              <Route path="/signup" element={<Navigate to="/signup/patient" replace />} />
+              <Route path="/signup/:role" element={<Signup />} />
               <Route path="/forgot-password" element={<ForgotPassword />} />
               <Route path="/reset-password" element={<ResetPassword />} />
-              <Route path="/journal" element={<JournalPage />} />
-              <Route path="/ambassadors" element={<Ambassadors />} />
-              <Route path="/ambassadors/:id" element={<AmbassadorProfile />} />
+              
+              <Route path="/journal" element={<Journal />} />
+              <Route path="/mood-mentors" element={<MoodMentors />} />
+              <Route path="/mood-mentors/:id" element={<MoodMentorProfile />} />
               <Route path="/booking" element={<BookingPage />} />
               
               <Route path="/resources" element={<Resources />} />
@@ -279,69 +240,69 @@ const AppContent = () => {
               <Route path="/faqs" element={<FAQs />} />
               <Route path="/about" element={<About />} />
               
-              {/* Ambassador Dashboard Routes */}
-              <Route path="/ambassador-dashboard" element={
-                <ProtectedRoute requiredRole="ambassador">
-                  <AmbassadorDashboard />
+              {/* Mood Mentor Dashboard Routes */}
+              <Route path="/mood-mentor-dashboard" element={
+                <ProtectedRoute requiredRole="mood_mentor">
+                  <MoodMentorDashboard />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/appointments" element={
-                <ProtectedRoute requiredRole="ambassador">
-                  <AppointmentsPage />
+              <Route path="/mood-mentor-dashboard/appointments" element={
+                <ProtectedRoute requiredRole="mood_mentor">
+                  <MoodMentorAppointmentsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/patients" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/patients" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <PatientsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/groups" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/groups" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <GroupsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/resources" element={
-                <ProtectedRoute requiredRole="ambassador">
-                  <ResourcesPage />
+              <Route path="/mood-mentor-dashboard/resources" element={
+                <ProtectedRoute requiredRole="mood_mentor">
+                  <MoodMentorResourcesPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/reviews" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/reviews" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <ReviewsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/availability" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/availability" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <AvailabilityPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/messages" element={
-                <ProtectedRoute requiredRole="ambassador">
-                  <AmbassadorMessagesPage />
+              <Route path="/mood-mentor-dashboard/messages" element={
+                <ProtectedRoute requiredRole="mood_mentor">
+                  <MoodMentorMessagesPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/profile" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/profile" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <ProfilePage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/settings" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/settings" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <SettingsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/settings/delete-account" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/settings/delete-account" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <DeleteAccountPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/notifications" element={
-                <ProtectedRoute requiredRole="ambassador">
-                  <AmbassadorNotificationsPage />
+              <Route path="/mood-mentor-dashboard/notifications" element={
+                <ProtectedRoute requiredRole="mood_mentor">
+                  <MoodMentorNotificationsPage />
                 </ProtectedRoute>
               } />
-              <Route path="/ambassador-dashboard/*" element={
-                <ProtectedRoute requiredRole="ambassador">
+              <Route path="/mood-mentor-dashboard/*" element={
+                <ProtectedRoute requiredRole="mood_mentor">
                   <NotFound />
                 </ProtectedRoute>
               } />
@@ -455,21 +416,21 @@ const AppContent = () => {
 };
 
 const App = () => {
-  console.log('App component mounting...');
+  devLog('App component mounting...');
 
   // Run database migrations when the app starts
   useEffect(() => {
     const runMigrations = async () => {
       try {
-        // Ensure ambassador_profiles schema
+        // Ensure mood mentor profiles schema
         await profileService.ensureAmbassadorProfileSchema();
         
-        // Ensure ambassador dashboard schema
-        await ambassadorService.ensureDashboardSchema();
+        // Ensure mood mentor dashboard schema
+        await moodMentorService.ensureDashboardSchema();
         
-        console.log("Database schema checks completed");
+        devLog("Database schema checks completed");
       } catch (error) {
-        console.error("Error running migrations:", error);
+        errorLog("Error running migrations:", error);
       }
     };
     

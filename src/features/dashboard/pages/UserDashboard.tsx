@@ -1,8 +1,6 @@
-
 import { useEffect, useState } from 'react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { supabase } from '@/integrations/supabase/client';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -12,25 +10,14 @@ import {
   CardHeader,
   CardTitle,
 } from '@/components/ui/card';
-import { ReviewModal } from '@/features/ambassadors/components/ReviewModal';
-
-interface Booking {
-  id: string;
-  session_date: string;
-  session_time: string;
-  status: 'pending' | 'confirmed' | 'cancelled' | 'completed';
-  notes: string;
-  ambassador: {
-    id: string;
-    full_name: string;
-  };
-  has_review: boolean;
-}
+import { ReviewModal } from '@/features/mood-mentors/components/ReviewModal';
+import { Booking, bookingService } from '@/services/bookingService';
 
 export function UserDashboard() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [isReviewModalOpen, setIsReviewModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     loadBookings();
@@ -38,61 +25,14 @@ export function UserDashboard() {
 
   const loadBookings = async () => {
     try {
-      const {
-        data: { user },
-        error: userError,
-      } = await supabase.auth.getUser();
-
-      if (userError) throw userError;
-
-      // Modified query to be more explicit with column names
-      const { data, error } = await supabase
-        .from('bookings')
-        .select(`
-          id,
-          session_date,
-          session_time,
-          status,
-          notes,
-          ambassador_info:ambassador_id (
-            id,
-            full_name
-          ),
-          has_review:ambassador_reviews!left(id)
-        `)
-        .eq('user_id', user.id)
-        .order('session_date', { ascending: false });
-
-      if (error) throw error;
-
-      // Transform the data to match our interface with proper error handling
-      const processedBookings = (data || []).map(booking => {
-        // Safely extract ambassador info, defaulting if there's an error
-        const ambassadorInfo = booking.ambassador_info && typeof booking.ambassador_info === 'object' ? 
-          { 
-            id: (booking.ambassador_info as any).id || '',
-            full_name: (booking.ambassador_info as any).full_name || 'Unknown Ambassador'
-          } : 
-          { 
-            id: '', // Remove reference to ambassador_id
-            full_name: 'Unknown Ambassador' 
-          };
-        
-        return {
-          id: booking.id,
-          session_date: booking.session_date,
-          session_time: booking.session_time,
-          status: (booking.status || 'pending') as 'pending' | 'confirmed' | 'cancelled' | 'completed',
-          notes: booking.notes || '',
-          ambassador: ambassadorInfo,
-          has_review: Array.isArray(booking.has_review) && booking.has_review.length > 0
-        };
-      });
-      
-      setBookings(processedBookings);
+      setIsLoading(true);
+      const bookingsData = await bookingService.getUserBookings();
+      setBookings(bookingsData);
     } catch (error) {
       toast.error('Failed to load bookings');
       console.error('Error loading bookings:', error);
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -106,6 +46,17 @@ export function UserDashboard() {
     setIsReviewModalOpen(false);
     setSelectedBooking(null);
   };
+
+  if (isLoading) {
+    return (
+      <div className="container mx-auto py-8">
+        <h1 className="text-3xl font-bold mb-8">Your Dashboard</h1>
+        <div className="flex items-center justify-center h-64">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="container mx-auto py-8">

@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
-import { supabase } from '@/integrations/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -16,8 +15,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import DashboardLayout from '../components/DashboardLayout';
 import { Skeleton } from '@/components/ui/skeleton';
 import { format } from 'date-fns';
-import { getDeviceInfo, getFormattedDeviceInfo } from '@/utils/device-detection';
-import { authService } from '@/integrations/supabase/services/auth.service';
+import { getDeviceInfo } from '@/utils/device-detection';
+import { api } from '@/lib/api';
+import { toast } from 'sonner';
+import { errorLog, devLog } from '@/utils/environment';
 
 // Define the schema for patient profile form
 const patientFormSchema = z.object({
@@ -99,266 +100,178 @@ export default function Settings() {
   const { register, handleSubmit, formState: { errors }, setValue, watch, control } = useForm<PatientFormValues>({
     resolver: zodResolver(patientFormSchema),
     defaultValues,
-    // Don't validate on mount to reduce initial load time
     mode: 'onSubmit'
   });
 
-  // Load user profile data only once
+  // Load user profile data
   useEffect(() => {
     const loadPatientProfile = async () => {
-      // Skip if we've already initialized to prevent blinking
-      if (hasInitialized) return;
+      if (hasInitialized || !user?.id) return;
       
       try {
-        if (!user?.id) return;
-        
-        // Immediately set default values to prevent form field flickering
+        // Set default values to prevent form field flickering
         Object.keys(defaultValues).forEach(key => {
           setValue(key as keyof PatientFormValues, defaultValues[key as keyof PatientFormValues]);
         });
         
-        // Load both user metadata and profile data in parallel for speed
-        const [userDataResult, profileDataResult] = await Promise.all([
-          supabase.auth.getUser(),
-          supabase.from('patient_profiles').select('*').eq('id', user.id).single()
-        ]);
+        devLog("Loading patient profile for user:", user.id);
         
-        const userData = userDataResult.data;
-        const profileData = profileDataResult.data;
+        // Load profile data
+        const response = await api.get(`/api/patients/${user.id}/profile`);
         
-        if (userData && userData.user) {
-          const userMeta = userData.user.user_metadata;
-          
-          // Set values from user metadata
-          setValue('first_name', userMeta?.first_name || '');
-          setValue('last_name', userMeta?.last_name || '');
-          setValue('phone_number', userMeta?.phone_number || '');
-          setValue('gender', userMeta?.gender || 'prefer-not-to-say');
-          setValue('date_of_birth', userMeta?.date_of_birth || '');
-          setValue('country', userMeta?.country || '');
-          setValue('address', userMeta?.address || '');
-          setValue('city', userMeta?.city || '');
-          setValue('state', userMeta?.state || '');
-          setValue('pincode', userMeta?.pincode || '');
-          setValue('avatar_url', userMeta?.avatar_url || '');
-          setValue('about_me', userMeta?.about_me || '');
+        if (!response.ok) {
+          throw new Error(`Failed to load profile: ${response.statusText}`);
         }
         
-        // Update with profile data if it exists
+        const profileData = await response.json();
+        
         if (profileData) {
-          setValue('first_name', profileData.first_name || watch('first_name'));
-          setValue('last_name', profileData.last_name || watch('last_name'));
-          setValue('phone_number', profileData.phone_number || watch('phone_number'));
-          setValue('gender', profileData.gender || watch('gender'));
-          setValue('date_of_birth', profileData.date_of_birth || watch('date_of_birth'));
-          setValue('country', profileData.country || watch('country'));
-          setValue('address', profileData.address || watch('address'));
-          setValue('city', profileData.city || watch('city'));
-          setValue('state', profileData.state || watch('state'));
-          setValue('pincode', profileData.pincode || watch('pincode'));
-          setValue('avatar_url', profileData.avatar_url || watch('avatar_url'));
-          setValue('about_me', profileData.about_me || watch('about_me'));
+          devLog("Profile data loaded successfully");
+          // Update form with profile data
+          Object.keys(profileData).forEach(key => {
+            if (key in defaultValues) {
+              setValue(key as keyof PatientFormValues, profileData[key]);
+            }
+          });
         }
         
-        // Mark as initialized to prevent repeat loading
         setHasInitialized(true);
       } catch (error) {
-        console.error('Error loading profile:', error);
+        errorLog('Error loading profile:', error);
+        toast.error('Failed to load profile data');
       } finally {
-        // Remove loading state immediately
         setLoading(false);
       }
     };
 
-    // If we have user data, load profile immediately
     if (user?.id) {
       loadPatientProfile();
     } else {
-      // If no user yet, wait a bit and check again
       const timer = setTimeout(() => {
         if (user?.id && !hasInitialized) {
           loadPatientProfile();
         } else {
-          // Give up and show the form without data after a short timeout
           setLoading(false);
         }
-      }, 200); // Reduced timeout
+      }, 200);
       
       return () => clearTimeout(timer);
     }
-  }, [user, setValue, watch, hasInitialized, defaultValues]);
+  }, [user, setValue, hasInitialized, defaultValues]);
 
+  // Update device information
   useEffect(() => {
-    // Update device information when component mounts, but only after main data loads
     const updateDeviceInfo = async () => {
-      // Skip if already updated to prevent rerenders
-      if (hasUpdatedDeviceInfo) return;
+      if (hasUpdatedDeviceInfo || !user?.id) return;
       
-      // Get current device info synchronously for UI
       const deviceInfo = getDeviceInfo();
-      // Set device info immediately for UI
       setCurrentDeviceInfo(`${deviceInfo.os} • ${deviceInfo.deviceType} • ${deviceInfo.browser}`);
       setHasUpdatedDeviceInfo(true);
       
-      // Do the API call asynchronously in the background later
-      if (user?.id) {
-        setTimeout(() => {
-          authService.updateUserMetadata({
-            current_session: {
-              device_type: deviceInfo.deviceType,
-              browser: deviceInfo.browser,
-              os: deviceInfo.os,
-              last_login: new Date().toISOString(),
-              user_agent: deviceInfo.fullUserAgent
-            }
-          }).catch(err => {
-            console.error('Non-critical error updating device metadata:', err);
-          });
-        }, 1000); // Delay by 1 second to prioritize UI rendering
+      try {
+        devLog("Updating device info for user:", user.id);
+        
+        const response = await api.post('/api/users/device-info', {
+          device_type: deviceInfo.deviceType,
+          browser: deviceInfo.browser,
+          os: deviceInfo.os,
+          last_login: new Date().toISOString(),
+          user_agent: deviceInfo.fullUserAgent
+        });
+        
+        if (!response.ok) {
+          throw new Error(`Failed to update device info: ${response.statusText}`);
+        }
+      } catch (error) {
+        errorLog('Error updating device info:', error);
+        // Non-critical error, don't show to user
       }
     };
     
-    // Only run after main loading is done
     if (!loading && user?.id) {
       updateDeviceInfo();
     }
-  }, [user, hasUpdatedDeviceInfo, loading, currentDeviceInfo]);
+  }, [user, hasUpdatedDeviceInfo, loading]);
 
+  // Handle avatar upload
   const handleAvatarUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     try {
       setUploading(true);
       const file = event.target.files?.[0];
       if (!file) return;
 
-      // Generate a unique filename
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user?.id}-${Date.now()}.${fileExt}`;
-      // Use a direct path without the 'avatars/' prefix since the bucket is already named 'avatars'
-      const filePath = `${fileName}`;
-
-      // Log for debugging
-      console.log("Attempting to upload to:", filePath);
-
-      // Upload file to storage - note we're directly using 'avatars' as the bucket name
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('avatars')
-        .upload(filePath, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
-
-      if (uploadError) {
-        console.error('Upload error details:', uploadError);
-        throw uploadError;
-      }
-
-      console.log("Upload successful:", uploadData);
-
-      // Get the public URL from the path that was actually uploaded
-      const { data: { publicUrl } } = supabase.storage
-        .from('avatars')
-        .getPublicUrl(filePath);
-
-      console.log("Public URL generated:", publicUrl);
-
-      // Update form value
-      setValue('avatar_url', publicUrl);
+      devLog("Uploading avatar file:", file.name);
       
-      // Update user metadata right away for immediate feedback
-      const { error: updateError } = await supabase.auth.updateUser({
-        data: { avatar_url: publicUrl }
-      });
+      const formData = new FormData();
+      formData.append('avatar', file);
 
-      if (updateError) {
-        console.error('Error updating user metadata:', updateError);
-      } else {
-        console.log('User metadata successfully updated with new avatar');
+      const response = await api.post('/api/users/avatar', formData);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to upload avatar: ${response.statusText}`);
       }
+      
+      const data = await response.json();
 
-      setSaveSuccess(true);
-      setTimeout(() => setSaveSuccess(false), 3000);
+      if (data.avatar_url) {
+        setValue('avatar_url', data.avatar_url);
+        toast.success('Avatar updated successfully');
+      }
     } catch (error) {
-      console.error('Error uploading avatar:', error);
-      setSaveError(true);
-      setTimeout(() => setSaveError(false), 3000);
+      errorLog('Error uploading avatar:', error);
+      toast.error('Failed to upload avatar');
     } finally {
       setUploading(false);
     }
   };
 
+  // Handle form submission
   const onSubmit = async (data: PatientFormValues) => {
     try {
-      if (!user?.id) throw new Error('No user found');
-
-      console.log("Submitting form data:", data);
-      
-      // Show success message early to improve perceived performance
-      setSaveSuccess(true);
-
-      // Update user metadata
-      const updateUserPromise = supabase.auth.updateUser({
-        data: { 
-          first_name: data.first_name,
-          last_name: data.last_name,
-          phone_number: data.phone_number,
-          gender: data.gender,
-          date_of_birth: data.date_of_birth,
-          country: data.country,
-          address: data.address,
-          city: data.city,
-          state: data.state,
-          pincode: data.pincode,
-          avatar_url: data.avatar_url,
-          about_me: data.about_me
-        },
-      });
-
-      // Create a profile object with only the fields we know the database accepts
-      const profileData = {
-        id: user.id,
-        first_name: data.first_name,
-        last_name: data.last_name,
-        email: user.email || '',
-        phone_number: data.phone_number,
-        date_of_birth: data.date_of_birth || '',
-        country: data.country,
-        address: data.address || '',
-        city: data.city || '',
-        state: data.state || '', 
-        pincode: data.pincode || '',
-        updated_at: new Date().toISOString(),
-      };
-
-      // Also update or create patient profile record
-      const updateProfilePromise = supabase
-        .from('patient_profiles')
-        .upsert(profileData);
-
-      // Run both operations in parallel
-      const [userResult, profileResult] = await Promise.all([
-        updateUserPromise,
-        updateProfilePromise
-      ]);
-
-      if (userResult.error) {
-        console.error("Error updating user metadata:", userResult.error);
-        throw userResult.error;
-      }
-
-      if (profileResult.error) {
-        console.error("Error updating profile in database:", profileResult.error);
-        throw profileResult.error;
-      }
-
-      console.log("Profile successfully updated");
-      
-      // Success notification will auto-hide after 3 seconds
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (error) {
-      console.error('Error saving profile:', error);
       setSaveSuccess(false);
+      setSaveError(false);
+      
+      devLog("Submitting profile update for user:", user?.id);
+
+      const response = await api.put(`/api/patients/${user?.id}/profile`, data);
+      
+      if (!response.ok) {
+        throw new Error(`Failed to update profile: ${response.statusText}`);
+      }
+      
+      const result = await response.json();
+
+      if (result) {
+        setSaveSuccess(true);
+        toast.success('Profile updated successfully');
+      }
+    } catch (error) {
+      errorLog('Error updating profile:', error);
       setSaveError(true);
-      setTimeout(() => setSaveError(false), 3000);
+      toast.error('Failed to update profile');
+    }
+  };
+
+  // Handle account deletion
+  const handleDeleteAccount = async () => {
+    if (!window.confirm('Are you sure you want to delete your account? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      devLog("Attempting to delete account for user:", user?.id);
+      
+      const response = await api.delete('/api/account');
+      
+      if (!response.ok) {
+        throw new Error(`Failed to delete account: ${response.statusText}`);
+      }
+      
+      navigate('/auth/signup');
+      toast.success('Account deleted successfully');
+    } catch (error) {
+      errorLog('Error deleting account:', error);
+      toast.error('Failed to delete account');
     }
   };
 
@@ -366,13 +279,9 @@ export default function Settings() {
     return (
       <DashboardLayout>
         <div className="container mx-auto py-10 px-4">
-          <div className="flex flex-col items-center justify-center">
-            <p className="text-[#20C0F3] font-medium mb-2">Please wait...</p>
-            <div className="flex space-x-2">
-              <div className="w-2 h-2 bg-[#20C0F3] rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-              <div className="w-2 h-2 bg-[#20C0F3] rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-              <div className="w-2 h-2 bg-[#20C0F3] rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-            </div>
+          <Skeleton className="h-8 w-48 mb-6" />
+          <div className="space-y-6">
+            <Skeleton className="h-[400px] w-full" />
           </div>
         </div>
       </DashboardLayout>
@@ -403,120 +312,87 @@ export default function Settings() {
             <TabsTrigger value="notifications">Notifications</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="profile" className="space-y-6">
-            <Card className="shadow-md border-none rounded-xl">
-              <CardHeader className="border-b">
-                <CardTitle>Personal Information</CardTitle>
-              </CardHeader>
-              <CardContent className="p-6">
-                <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
-                  {/* Avatar Upload Section */}
-                  <div className="flex flex-col sm:flex-row items-center sm:items-start gap-6 mb-8">
-                    <div className="relative cursor-pointer">
-                      <Avatar className="h-24 w-24 cursor-pointer">
-                        <AvatarImage 
-                          src={watch('avatar_url')} 
-                          alt="Profile picture"
-                          onError={(e) => {
-                            console.log("Avatar failed to load:", e);
-                            // Hide the image if it fails to load
-                            const target = e.currentTarget as HTMLImageElement;
-                            target.style.display = 'none';
-                          }}
-                        />
-                        <AvatarFallback className="bg-blue-600 text-white text-lg">
+          <TabsContent value="profile">
+            <form onSubmit={handleSubmit(onSubmit)}>
+              <Card className="shadow-md border-none rounded-xl">
+                <CardHeader className="border-b">
+                  <CardTitle>Profile Information</CardTitle>
+                </CardHeader>
+                <CardContent className="p-6">
+                  <div className="space-y-6">
+                    {/* Avatar upload */}
+                    <div className="flex items-center gap-4">
+                      <Avatar className="h-20 w-20">
+                        <AvatarImage src={watch('avatar_url')} />
+                        <AvatarFallback>
                           {watch('first_name')?.[0]}{watch('last_name')?.[0]}
                         </AvatarFallback>
                       </Avatar>
-                      <label htmlFor="profile-upload" className="absolute inset-0 cursor-pointer">
-                        <span className="sr-only">Upload profile picture</span>
-                      </label>
-                      <Input
-                        id="profile-upload"
-                        type="file"
-                        accept="image/*"
-                        onChange={handleAvatarUpload}
-                        disabled={uploading}
-                        className="absolute inset-0 opacity-0 cursor-pointer z-10 w-24 h-24"
-                      />
-                      {uploading && (
-                        <div className="absolute inset-0 bg-black/20 rounded-full flex items-center justify-center">
-                          <div className="h-5 w-5 border-2 border-t-transparent border-white rounded-full animate-spin"></div>
-                        </div>
-                      )}
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-medium">Profile Picture</h3>
-                      <p className="text-sm text-slate-500">
-                        Click on the avatar to update your profile picture
-                      </p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        Recommended: Square image, at least 300x300 pixels
-                      </p>
-                      {watch('avatar_url') && (
-                        <p className="text-xs text-green-600 mt-1">
-                          Avatar URL: {watch('avatar_url').substring(0, 30)}...
-                        </p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Personal Details Section */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <Label htmlFor="first_name">First Name <span className="text-red-500">*</span></Label>
-                      <Input
-                        id="first_name"
-                        {...register('first_name')}
-                        className="mt-1"
-                      />
-                      {errors.first_name && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.first_name.message)}</p>
-                      )}
+                      <div>
+                        <Button
+                          variant="outline"
+                          className="relative"
+                          disabled={uploading}
+                        >
+                          {uploading ? 'Uploading...' : 'Change Avatar'}
+                          <input
+                            type="file"
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                            onChange={handleAvatarUpload}
+                            accept="image/*"
+                          />
+                        </Button>
+                      </div>
                     </div>
 
-                    <div>
-                      <Label htmlFor="last_name">Last Name <span className="text-red-500">*</span></Label>
-                      <Input
-                        id="last_name"
-                        {...register('last_name')}
-                        className="mt-1"
-                      />
-                      {errors.last_name && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.last_name.message)}</p>
-                      )}
+                    {/* Name fields */}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="first_name">First Name</Label>
+                        <Input
+                          id="first_name"
+                          {...register('first_name')}
+                          className="mt-1"
+                        />
+                        {errors.first_name && (
+                          <p className="text-red-500 text-sm mt-1">{errors.first_name.message}</p>
+                        )}
+                      </div>
+                      <div>
+                        <Label htmlFor="last_name">Last Name</Label>
+                        <Input
+                          id="last_name"
+                          {...register('last_name')}
+                          className="mt-1"
+                        />
+                        {errors.last_name && (
+                          <p className="text-red-500 text-sm mt-1">{errors.last_name.message}</p>
+                        )}
+                      </div>
                     </div>
 
+                    {/* Contact information */}
                     <div>
-                      <Label htmlFor="phone_number">Phone Number <span className="text-red-500">*</span></Label>
+                      <Label htmlFor="phone_number">Phone Number</Label>
                       <Input
                         id="phone_number"
                         {...register('phone_number')}
                         className="mt-1"
                       />
                       {errors.phone_number && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.phone_number.message)}</p>
+                        <p className="text-red-500 text-sm mt-1">{errors.phone_number.message}</p>
                       )}
                     </div>
 
+                    {/* Gender selection */}
                     <div>
-                      <Label htmlFor="date_of_birth">Date of Birth</Label>
-                      <Input
-                        id="date_of_birth"
-                        type="date"
-                        {...register('date_of_birth')}
-                        className="mt-1"
-                      />
-                    </div>
-
-                    <div>
-                      <Label htmlFor="gender">Gender <span className="text-red-500">*</span></Label>
-                      <Select 
-                        onValueChange={(value) => setValue('gender', value as any)} 
-                        defaultValue={watch('gender')}
+                      <Label htmlFor="gender">Gender</Label>
+                      <Select
+                        value={watch('gender')}
+                        onValueChange={(value) => setValue('gender', value as any)}
                       >
-                        <SelectTrigger className="mt-1">
-                          <SelectValue placeholder="Select your gender" />
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select gender" />
                         </SelectTrigger>
                         <SelectContent>
                           {GENDER_OPTIONS.map(option => (
@@ -527,68 +403,51 @@ export default function Settings() {
                         </SelectContent>
                       </Select>
                       {errors.gender && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.gender.message)}</p>
+                        <p className="text-red-500 text-sm mt-1">{errors.gender.message}</p>
                       )}
                     </div>
 
-                    <div>
-                      <Label htmlFor="country">Country <span className="text-red-500">*</span></Label>
-                      <Input
-                        id="country"
-                        {...register('country')}
-                        className="mt-1"
-                      />
-                      {errors.country && (
-                        <p className="text-red-500 text-sm mt-1">{String(errors.country.message)}</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* About Me Section */}
-                  <div className="mt-6">
-                    <Label htmlFor="about_me">About Me</Label>
-                    <Textarea
-                      id="about_me"
-                      {...register('about_me')}
-                      className="mt-1"
-                      rows={4}
-                      placeholder="Share a little about yourself, your interests, or why you're using this platform"
-                    />
-                  </div>
-
-                  {/* Address Section */}
-                  <div className="mt-6">
-                    <h3 className="text-lg font-medium mb-4">Address Information</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="md:col-span-2">
-                        <Label htmlFor="address">Street Address</Label>
+                    {/* Location information */}
+                    <div className="space-y-4">
+                      <div>
+                        <Label htmlFor="country">Country</Label>
                         <Input
+                          id="country"
+                          {...register('country')}
+                          className="mt-1"
+                        />
+                        {errors.country && (
+                          <p className="text-red-500 text-sm mt-1">{errors.country.message}</p>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div>
+                          <Label htmlFor="city">City</Label>
+                          <Input
+                            id="city"
+                            {...register('city')}
+                            className="mt-1"
+                          />
+                        </div>
+                        <div>
+                          <Label htmlFor="state">State</Label>
+                          <Input
+                            id="state"
+                            {...register('state')}
+                            className="mt-1"
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <Label htmlFor="address">Address</Label>
+                        <Textarea
                           id="address"
                           {...register('address')}
                           className="mt-1"
                         />
                       </div>
-
                       <div>
-                        <Label htmlFor="city">City</Label>
-                        <Input
-                          id="city"
-                          {...register('city')}
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div>
-                        <Label htmlFor="state">State/Province</Label>
-                        <Input
-                          id="state"
-                          {...register('state')}
-                          className="mt-1"
-                        />
-                      </div>
-
-                      <div>
-                        <Label htmlFor="pincode">Postal/Zip Code</Label>
+                        <Label htmlFor="pincode">Pincode</Label>
                         <Input
                           id="pincode"
                           {...register('pincode')}
@@ -596,101 +455,81 @@ export default function Settings() {
                         />
                       </div>
                     </div>
+
+                    {/* About me */}
+                    <div>
+                      <Label htmlFor="about_me">About Me</Label>
+                      <Textarea
+                        id="about_me"
+                        {...register('about_me')}
+                        className="mt-1"
+                        rows={4}
+                      />
+                    </div>
                   </div>
 
-                  <Button type="submit" className="bg-[#20C0F3] hover:bg-[#20C0F3]/90 text-white mt-6">
-                    Save Changes
-                  </Button>
-                </form>
-              </CardContent>
-            </Card>
+                  <div className="mt-6 flex justify-end">
+                    <Button type="submit" className="bg-blue-600 hover:bg-blue-700">
+                      Save Changes
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </form>
           </TabsContent>
 
           <TabsContent value="account">
-            <Card className="shadow-md border-none rounded-xl mb-6">
+            <Card className="shadow-md border-none rounded-xl">
               <CardHeader className="border-b">
                 <CardTitle>Account Settings</CardTitle>
               </CardHeader>
               <CardContent className="p-6">
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                      <Label htmlFor="email">Email Address</Label>
-                      <Input
-                        id="email"
-                        type="email"
-                        value={user?.email || ''}
-                        disabled
-                        className="mt-1 bg-slate-50"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">Contact support to change your email</p>
-                    </div>
-
-                    <div>
-                      <Label htmlFor="password">Password</Label>
-                      <Input
-                        id="password"
-                        type="password"
-                        value="••••••••"
-                        disabled
-                        className="mt-1 bg-slate-50"
-                      />
-                      <p className="text-xs text-slate-500 mt-1">
-                        <Button 
-                          variant="link" 
-                          className="p-0 h-auto text-xs"
-                          onClick={() => navigate('/forgot-password')}
-                        >
-                          Reset your password
-                        </Button>
-                      </p>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-6 mt-6 border-t">
-                    <h3 className="text-lg font-medium mb-2">Login History</h3>
+                <div className="space-y-6">
+                  {/* Email settings */}
+                  <div>
+                    <h4 className="font-medium mb-2">Email Address</h4>
                     <p className="text-sm text-slate-500 mb-4">
-                      Recent logins to your account
+                      Your email address is <strong>{user?.email}</strong>
                     </p>
-                    
-                    <div className="space-y-3">
-                      <div className="flex justify-between p-3 rounded-lg bg-slate-50">
-                        <div>
-                          <p className="font-medium">Current session</p>
-                          <p className="text-sm text-slate-500">
-                            {currentDeviceInfo || getFormattedDeviceInfo()}
-                          </p>
-                        </div>
-                        <div className="text-sm text-right">
-                          <p>
-                            {format(new Date(), 'MMM d, yyyy')}
-                          </p>
-                          <p className="text-green-600">Active now</p>
-                        </div>
-                      </div>
-                    </div>
+                    <Button variant="outline">
+                      Change Email
+                    </Button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-            
-            {/* Danger Zone - only in account tab */}
-            <Card className="border-red-200 shadow-md rounded-xl">
-              <CardHeader className="border-b border-red-100">
-                <CardTitle className="text-red-600">Danger Zone</CardTitle>
-              </CardHeader>
-              <CardContent className="pt-6">
-                <div className="space-y-2">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <h3 className="text-lg font-medium">Delete Account</h3>
-                      <p className="text-sm text-slate-500">
-                        Permanently delete your account and all of your data. This action cannot be undone.
-                      </p>
-                    </div>
-                    <Button 
-                      variant="destructive" 
-                      onClick={() => navigate(`/patient-dashboard/delete-account`)}
+
+                  <hr className="border-gray-200" />
+
+                  {/* Password settings */}
+                  <div>
+                    <h4 className="font-medium mb-2">Password</h4>
+                    <p className="text-sm text-slate-500 mb-4">
+                      Change your password to keep your account secure
+                    </p>
+                    <Button variant="outline">
+                      Change Password
+                    </Button>
+                  </div>
+
+                  <hr className="border-gray-200" />
+
+                  {/* Device information */}
+                  <div>
+                    <h4 className="font-medium mb-2">Current Device</h4>
+                    <p className="text-sm text-slate-500">
+                      {currentDeviceInfo}
+                    </p>
+                  </div>
+
+                  <hr className="border-gray-200" />
+
+                  {/* Delete account */}
+                  <div>
+                    <h4 className="font-medium text-red-600 mb-2">Delete Account</h4>
+                    <p className="text-sm text-slate-500 mb-4">
+                      Once you delete your account, there is no going back. Please be certain.
+                    </p>
+                    <Button
+                      variant="destructive"
+                      onClick={handleDeleteAccount}
                     >
                       Delete Account
                     </Button>

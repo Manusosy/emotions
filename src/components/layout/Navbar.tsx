@@ -142,8 +142,8 @@ export default function Navbar() {
               <Link to="/journal" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium">
                 Journal
               </Link>
-              <Link to="/ambassadors" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium">
-                Mental Health Ambassadors
+              <Link to="/mood-mentors" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium">
+                Mood Mentors
               </Link>
               <Link to="/resources" className="text-white/90 hover:text-white px-4 py-1.5 rounded-full transition-all hover:bg-[#fda802] text-sm font-medium">
                 Resource Center
@@ -279,8 +279,8 @@ export default function Navbar() {
             <a href="/journal" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/journal", e)}>
               Journal
             </a>
-            <a href="/ambassadors" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/ambassadors", e)}>
-              Mental Health Ambassadors
+            <a href="/mood-mentors" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/mood-mentors", e)}>
+              Mood Mentors
             </a>
             <a href="/resources" className="block px-4 py-2 hover:bg-[#fda802] rounded-lg transition-colors" onClick={(e) => handleNavigation("/resources", e)}>
               Resource Center

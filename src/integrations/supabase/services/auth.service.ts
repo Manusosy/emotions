@@ -12,11 +12,6 @@ export type AuthSignUpData = {
   gender?: string | null;
 };
 
-export type AuthSignInData = {
-  email: string;
-  password: string;
-};
-
 class AuthService {
   /**
    * Sign up a new user
@@ -76,39 +71,21 @@ class AuthService {
   }
 
   /**
-   * Sign in a user with email and password
+   * Sign in a user
    */
-  async signIn(data: AuthSignInData) {
+  async signIn({ email, password }: { email: string; password: string }) {
     try {
-      console.log('Attempting to sign in user:', data.email);
-      const authResponse = await supabase.auth.signInWithPassword({
-        email: data.email,
-        password: data.password
+      const signInResponse = await supabase.auth.signInWithPassword({
+        email,
+        password
       });
-
-      if (authResponse.error) {
-        console.error('Sign in error:', authResponse.error);
-        throw authResponse.error;
-      }
-
-      // Capture device information
-      const deviceInfo = getDeviceInfo();
       
-      // Store the device info in the user metadata
-      if (authResponse.data.user) {
-        await this.updateUserMetadata({
-          current_session: {
-            device_type: deviceInfo.deviceType,
-            browser: deviceInfo.browser,
-            os: deviceInfo.os,
-            last_login: new Date().toISOString(),
-            user_agent: deviceInfo.fullUserAgent
-          }
-        });
+      if (signInResponse.error) {
+        console.error('Sign in error:', signInResponse.error);
+        throw signInResponse.error;
       }
-
-      console.log('User signed in successfully:', authResponse.data.user?.id);
-      return authResponse;
+      
+      return signInResponse;
     } catch (error) {
       console.error('Sign in process failed:', error);
       throw error;
@@ -116,59 +93,94 @@ class AuthService {
   }
 
   /**
-   * Sign out the current user
+   * Sign out current user
    */
   async signOut() {
-    return await supabase.auth.signOut();
+    try {
+      return await supabase.auth.signOut();
+    } catch (error) {
+      console.error('Sign out failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Get the current session
-   */
-  async getSession() {
-    return await supabase.auth.getSession();
-  }
-
-  /**
-   * Get the current user
+   * Get current user
    */
   async getUser() {
-    const { data } = await supabase.auth.getUser();
-    return data.user;
+    try {
+      return await supabase.auth.getUser();
+    } catch (error) {
+      console.error('Get user failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Setup auth state change listener
+   * Get current session
    */
-  onAuthStateChange(callback: (event: string, session: any) => void) {
-    return supabase.auth.onAuthStateChange(callback);
+  async getSession() {
+    try {
+      return await supabase.auth.getSession();
+    } catch (error) {
+      console.error('Get session failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Update user metadata
+   * Set session
    */
-  async updateUserMetadata(metadata: Record<string, any>) {
-    return await supabase.auth.updateUser({
-      data: metadata
-    });
+  async setSession(accessToken: string, refreshToken: string) {
+    try {
+      return await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken
+      });
+    } catch (error) {
+      console.error('Set session failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Reset password
+   * Refresh session
+   */
+  async refreshSession() {
+    try {
+      return await supabase.auth.refreshSession();
+    } catch (error) {
+      console.error('Refresh session failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reset password for a user
    */
   async resetPassword(email: string) {
-    return await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
+    try {
+      return await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password/confirm`
+      });
+    } catch (error) {
+      console.error('Reset password failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Update password
+   * Update user password
    */
-  async updatePassword(password: string) {
-    return await supabase.auth.updateUser({
-      password: password
-    });
+  async updatePassword(newPassword: string) {
+    try {
+      return await supabase.auth.updateUser({
+        password: newPassword
+      });
+    } catch (error) {
+      console.error('Update password failed:', error);
+      throw error;
+    }
   }
 }
 
