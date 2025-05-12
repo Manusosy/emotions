@@ -1,14 +1,15 @@
 {
   "version": 2,
+  "buildCommand": "bash ./vercel.build.sh",
+  "outputDirectory": "dist",
   "routes": [
     { "handle": "filesystem" },
     { "src": "/.*", "dest": "/index.html" }
   ],
-  "buildCommand": "npm run build:vercel",
-  "outputDirectory": "dist",
   "env": {
     "NODE_ENV": "production",
     "VITE_ENABLE_DIAGNOSTICS": "false",
     "VITE_API_URL": "https://emotions-api.vercel.app"
-  }
+  },
+  "installCommand": "npm install --include=dev"
 } 
