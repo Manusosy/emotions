@@ -25,14 +25,16 @@ The application uses environment variables to control what features are enabled:
 3. Import your repository
 
 4. Configure the project settings:
-   - Build Command: `npm run build` (or your custom build command)
+   - Build Command: `npm run build:vercel`
    - Output Directory: `dist` (Vite's default output directory)
    - Install Command: `npm install` (or `yarn install`)
 
-5. Set environment variables:
-   - `NODE_ENV`: `production` (this should be set automatically by Vercel)
-   - Other environment variables as needed for your app
-   - Do NOT set `VITE_ENABLE_DIAGNOSTICS` in production unless you want diagnostics to be available
+5. Environment variables (already configured in vercel.json):
+   - `NODE_ENV`: `production`
+   - `VITE_ENABLE_DIAGNOSTICS`: `false`
+   - `VITE_API_URL`: `https://emotions-api.vercel.app`
+
+   > Note: These environment variables are pre-configured in the vercel.json file, so you shouldn't need to set them manually during deployment.
 
 6. Deploy the application
 
@@ -43,6 +45,7 @@ For local development, you can use a `.env.local` file with the following conten
 ```
 NODE_ENV=development
 VITE_ENABLE_DIAGNOSTICS=true
+VITE_API_URL=http://localhost:3001
 ```
 
 This will ensure the diagnostic tool is available during local development.
@@ -52,9 +55,9 @@ This will ensure the diagnostic tool is available during local development.
 If you need to debug issues in the production environment, you can temporarily enable the diagnostic tool by:
 
 1. Going to your project settings in Vercel
-2. Adding the environment variable `VITE_ENABLE_DIAGNOSTICS=true`
+2. Overriding the environment variable `VITE_ENABLE_DIAGNOSTICS` to `true`
 3. Redeploying the application
-4. **Important**: Remember to remove this environment variable after debugging to hide the tool again
+4. **Important**: Remember to remove this environment variable override after debugging to hide the tool again
 
 ## Security Considerations
 

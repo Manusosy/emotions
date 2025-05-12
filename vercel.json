@@ -1,5 +1,7 @@
 {
   "version": 2,
+  "buildCommand": "npm run build:vercel",
+  "outputDirectory": "dist",
   "builds": [
     {
       "src": "package.json",
@@ -20,6 +22,8 @@
     }
   ],
   "env": {
-    "NODE_ENV": "production"
+    "NODE_ENV": "production",
+    "VITE_ENABLE_DIAGNOSTICS": "false",
+    "VITE_API_URL": "https://emotions-api.vercel.app"
   }
 } 
