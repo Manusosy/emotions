@@ -11,7 +11,7 @@
     "api": "node server.js",
     "dev:all": "concurrently \"npm run dev\" \"npm run api\"",
     "build": "tsc && vite build",
-    "build:vercel": "NODE_ENV=production tsc && vite build",
+    "build:vercel": "rm -rf dist && NODE_ENV=production tsc && vite build",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "preview": "vite preview",
