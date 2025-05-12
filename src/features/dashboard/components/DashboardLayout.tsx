@@ -48,7 +48,9 @@ import {
   Star,
   Info,
   HeartPulse,
-  LayoutDashboard
+  LayoutDashboard,
+  MessageCircle,
+  Smile
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -77,6 +79,8 @@ import {
 } from "@/components/ui/command";
 import { cn } from "@/lib/utils";
 import { Stabilizer } from "@/components/ui/stabilizer";
+import EmotionalWellnessButton from "./EmotionalWellnessButton";
+import { UserRole, User as UserType } from "@/types/database.types";
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -133,7 +137,7 @@ const patientNavigation = [
 const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
-  const { user, signout, isAuthenticated } = useAuth();
+  const { user, signout, isAuthenticated, getFullName } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(!isMobile);
   const [currentPath, setCurrentPath] = useState(window.location.pathname);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
@@ -272,7 +276,7 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     setSidebarOpen(!isMobile);
   }, [isMobile]);
 
-  // Mock fetch notifications (replace with actual API call)
+  // Update the mock data initialization to remove fake notification counts
   useEffect(() => {
     const mockNotifications = [
       {
@@ -302,8 +306,8 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     ];
 
     setNotifications(mockNotifications);
-    setUnreadNotifications(mockNotifications.filter(n => !n.read).length);
-    setUnreadMessages(1); // Mock unread messages
+    setUnreadNotifications(0); // Set to 0 instead of counting unread
+    setUnreadMessages(0); // Set to 0 instead of hardcoded 1
   }, []);
 
   // Handle click outside of notification dropdown
@@ -320,24 +324,58 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
     };
   }, [notificationRef]);
 
-  // Handle search input
+  // Handle search input - Update the function to manage the dropdown
   const handleSearchInput = (value: string) => {
     setSearchQuery(value);
+    setIsSearchOpen(value.length > 0);
     
-    if (value.length > 0) {
-      const filteredResults = searchableItems.filter(item => 
-        item.title.toLowerCase().includes(value.toLowerCase()) ||
-        (item.description && item.description.toLowerCase().includes(value.toLowerCase()))
-      );
-      setSearchResults(filteredResults);
-    } else {
+    if (!value) {
       setSearchResults([]);
+      return;
     }
+
+    const filteredResults = searchableItems.filter(item => 
+      item.title.toLowerCase().includes(value.toLowerCase()) ||
+      (item.description && item.description.toLowerCase().includes(value.toLowerCase()))
+    );
+    setSearchResults(filteredResults);
   };
+
+  // Handle keyboard shortcut for search
+  useEffect(() => {
+    const down = (e: KeyboardEvent) => {
+      if (e.key === "k" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        setIsSearchOpen(prevState => !prevState);
+        if (!isSearchOpen) {
+          const searchInput = document.querySelector('input[type="search"]') as HTMLInputElement;
+          searchInput?.focus();
+        }
+      }
+    };
+
+    document.addEventListener("keydown", down);
+    return () => document.removeEventListener("keydown", down);
+  }, [isSearchOpen]);
+
+  // Close search dropdown when clicking outside
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (searchRef.current && !searchRef.current.contains(event.target as Node)) {
+        setIsSearchOpen(false);
+      }
+    }
+    
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [searchRef]);
 
   // Handle search result click
   const handleSearchResultClick = (href: string) => {
-    setSearchOpen(false);
+    setIsSearchOpen(false);
+    setSearchQuery('');
     navigate(href);
   };
 
@@ -402,146 +440,345 @@ const DashboardLayout = ({ children }: DashboardLayoutProps) => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col dashboard-container">
-      {/* Main Mobile Header */}
-      <header className="sticky top-0 z-30 flex h-16 items-center gap-4 border-b bg-background px-4 sm:px-6 lg:hidden">
-        <Button 
-          variant="outline" 
-          size="icon" 
-          className="lg:hidden" 
-          onClick={() => setSidebarOpen(!sidebarOpen)}
-        >
-          <Menu className="h-5 w-5" />
-          <span className="sr-only">Toggle Menu</span>
-        </Button>
-        
-        {/* Mobile Logo */}
-        <div className="flex-1 text-center lg:text-left">
-          <h1 className="text-xl font-bold">EmotiHealth</h1>
-        </div>
-        
-        {/* Mobile Profile Menu */}
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="rounded-full"
-            >
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={user?.avatar_url || ''} alt={user?.first_name || 'User'} />
-                <AvatarFallback>{user?.first_name?.charAt(0) || 'U'}</AvatarFallback>
-              </Avatar>
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuLabel>{user?.first_name} {user?.last_name}</DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => navigate('/patient-dashboard/profile')}>
-              <User className="mr-2 h-4 w-4" />
-              Profile
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => navigate('/patient-dashboard/settings')}>
-              <Settings className="mr-2 h-4 w-4" />
-              Settings
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={handleSignout}>
-              <LogOut className="mr-2 h-4 w-4" />
-              Log out
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </header>
-
-      <div className="flex flex-1">
-        {/* Sidebar/Navigation */}
-        <aside
-          className={cn(
-            "fixed inset-y-0 left-0 z-20 flex w-64 flex-col border-r bg-background transition-transform lg:static lg:block",
-            sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
-          )}
-          role="navigation"
-        >
-          <div className="flex flex-col h-full">
-            {/* Sidebar header */}
-            <div className="flex items-center justify-between px-6 h-16 border-b border-gray-200">
-              <Link to="/patient-dashboard" className="flex items-center space-x-2">
-                <HeartPulse className="h-6 w-6 text-blue-600" />
-                <span className="text-xl font-semibold text-gray-900">Emotions</span>
-              </Link>
+    <div className="flex h-screen bg-gray-50">
+      {/* Sidebar/Navigation - Updated with collapsible functionality */}
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-20 flex flex-col border-r border-gray-100 bg-white transition-all duration-300",
+          sidebarOpen ? "w-64" : "w-0 lg:w-20 overflow-hidden lg:overflow-visible",
+          "lg:static lg:translate-x-0"
+        )}
+      >
+        <div className="flex flex-col h-full">
+          {/* Sidebar header with logo and toggle button */}
+          <div className="flex items-center h-16 px-6 border-b border-gray-100 bg-white justify-between">
+            <Link to="/patient-dashboard" className="flex items-center gap-2">
+              {sidebarOpen ? (
+                <img 
+                  src="/assets/emotions-logo-black.png" 
+                  alt="Emotions Logo" 
+                  className="h-9 w-auto"
+                />
+              ) : (
+                <Brain className="h-7 w-7 text-blue-600" />
+              )}
+            </Link>
+            {!isMobile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="lg:flex hidden text-gray-500 hover:bg-gray-100"
+              >
+                <ChevronLeft className={`h-5 w-5 transition-transform ${!sidebarOpen ? 'rotate-180' : ''}`} />
+              </Button>
+            )}
+            {isMobile && sidebarOpen && (
               <button
                 onClick={() => setSidebarOpen(false)}
-                className="md:hidden text-gray-500 hover:text-gray-900"
+                className="text-gray-500 hover:text-gray-900"
               >
                 <X className="h-5 w-5" />
               </button>
-            </div>
+            )}
+          </div>
 
-            {/* Sidebar content */}
-            <div className="flex-1 overflow-y-auto py-4 px-3">
-              {patientNavigation.map((section) => (
-                <div key={section.section} className="mb-6">
-                  <h3 className="px-3 mb-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          {/* Add Emotional Wellness Check-in Button - Only show in expanded view */}
+          {sidebarOpen && (
+            <div className="px-4 pt-5 pb-3">
+              <EmotionalWellnessButton />
+            </div>
+          )}
+
+          {/* Sidebar navigation with sections */}
+          <div className="flex-1 overflow-y-auto py-4">
+            {patientNavigation.map((section) => (
+              <div key={section.section} className="mb-4">
+                {sidebarOpen && (
+                  <h3 className="px-4 mb-3 text-sm font-semibold text-slate-500 uppercase tracking-wider">
                     {section.section}
                   </h3>
-                  <div className="space-y-1">
-                    {section.items.map((item) => {
-                      const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
-                      return (
-                        <Link
-                          key={item.name}
-                          to={item.href}
-                          className={`flex items-center px-3 py-2 text-sm font-medium rounded-md transition-colors ${
-                            isActive
-                              ? "bg-blue-50 text-blue-700"
-                              : "text-gray-700 hover:bg-gray-100"
-                          }`}
-                          onClick={() => isMobile && setSidebarOpen(false)}
-                        >
-                          <item.icon className={`mr-3 h-5 w-5 ${isActive ? "text-blue-500" : "text-gray-400"}`} />
-                          <span>{item.name}</span>
-                          {item.name === "Messages" && unreadMessages > 0 && (
-                            <Badge variant="destructive" className="ml-auto">
-                              {unreadMessages}
-                            </Badge>
-                          )}
-                          {item.name === "Notifications" && unreadNotifications > 0 && (
-                            <Badge variant="destructive" className="ml-auto">
-                              {unreadNotifications}
-                            </Badge>
-                          )}
-                        </Link>
-                      );
-                    })}
-                  </div>
+                )}
+                <div className="space-y-1">
+                  {section.items.map((item) => {
+                    const isActive = currentPath === item.href || currentPath.startsWith(`${item.href}/`);
+                    const hasNotification = 
+                      (item.name === "Messages" && unreadMessages > 0) ||
+                      (item.name === "Notifications" && unreadNotifications > 0);
+                    
+                    return (
+                      <Link
+                        key={item.name}
+                        to={item.href}
+                        className={`flex items-center ${sidebarOpen ? 'px-4' : 'justify-center'} py-2.5 mx-2 text-[15px] font-medium rounded-lg transition-colors ${
+                          isActive
+                            ? "bg-blue-50 text-blue-600"
+                            : "text-slate-600 hover:bg-slate-50"
+                        } relative`}
+                        onClick={() => isMobile && setSidebarOpen(false)}
+                      >
+                        <item.icon className={`${sidebarOpen ? 'mr-3' : ''} h-5 w-5 ${isActive ? "text-blue-500" : "text-slate-400"}`} />
+                        {sidebarOpen && <span>{item.name}</span>}
+                        
+                        {hasNotification && (
+                          <Badge 
+                            variant="destructive" 
+                            className={`h-5 w-5 p-0 flex items-center justify-center bg-red-500 border-none absolute ${
+                              sidebarOpen ? "-right-1 top-1/2 -translate-y-1/2" : "-top-1 -right-1"
+                            }`}
+                          >
+                            {item.name === "Messages" ? unreadMessages : unreadNotifications}
+                          </Badge>
+                        )}
+                      </Link>
+                    );
+                  })}
                 </div>
-              ))}
-            </div>
+              </div>
+            ))}
+          </div>
 
-            {/* Sidebar footer */}
-            <div className="p-4 border-t border-gray-200">
+          {/* Sidebar footer with sign out button only */}
+          <div className="mt-auto border-t border-gray-100 bg-white">
+            <div className="p-4">
+              {/* Sign Out Button - Always visible */}
               <Button
                 variant="outline"
-                className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
+                size={sidebarOpen ? "default" : "icon"}
+                className={`${sidebarOpen ? "justify-start w-full" : "mx-auto"} text-red-600 hover:text-red-700 hover:bg-red-50`}
                 onClick={handleSignout}
               >
-                <LogOut className="mr-2 h-4 w-4" />
-                Sign Out
+                <LogOut className={`${sidebarOpen ? "mr-2" : ""} h-4 w-4`} />
+                {sidebarOpen && "Sign out"}
               </Button>
             </div>
           </div>
-        </aside>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Desktop Header - Updated to adjust based on sidebar state */}
+        <header className={cn(
+          "sticky top-0 z-10 h-16 border-b border-gray-100 bg-white",
+          "transition-all duration-300",
+          sidebarOpen ? "lg:pl-64" : "lg:pl-20"
+        )}>
+          <div className="flex h-full items-center justify-between px-4 lg:px-8">
+            {/* Mobile menu button - Only show on mobile */}
+            {isMobile && (
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setSidebarOpen(!sidebarOpen)}
+                className="lg:hidden"
+              >
+                <Menu className="h-6 w-6" />
+              </Button>
+            )}
+            
+            {/* Left spacer for centering on desktop */}
+            <div className="w-56 hidden lg:block"></div>
+            
+            {/* Centered Search Bar */}
+            <div ref={searchRef} className="relative w-full max-w-md mx-auto">
+              <form onSubmit={(e) => {
+                e.preventDefault();
+                if (searchResults.length > 0) {
+                  handleSearchResultClick(searchResults[0].href);
+                }
+              }} className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                <Input
+                  type="search"
+                  placeholder="Search dashboard..."
+                  className="w-full pl-10 pr-4 rounded-full border-gray-200 bg-white shadow-sm"
+                  value={searchQuery}
+                  onChange={(e) => handleSearchInput(e.target.value)}
+                  onFocus={() => setIsSearchOpen(searchQuery.length > 0)}
+                />
+              </form>
+
+              {/* Search Results Dropdown */}
+              {isSearchOpen && (
+                <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-lg shadow-lg border border-gray-200 max-h-[400px] overflow-y-auto z-50">
+                  {searchResults.length > 0 ? (
+                    <div className="py-2">
+                      {Object.entries(
+                        searchResults.reduce((acc, item) => {
+                          acc[item.category] = [...(acc[item.category] || []), item];
+                          return acc;
+                        }, {} as Record<string, typeof searchResults>)
+                      ).map(([category, items]) => (
+                        <div key={category}>
+                          <div className="px-3 py-2 text-xs font-semibold text-gray-500 bg-gray-50">
+                            {category}
+                          </div>
+                          {items.map((item) => (
+                            <button
+                              key={item.href}
+                              className="w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-3"
+                              onClick={() => handleSearchResultClick(item.href)}
+                            >
+                              {item.icon && <item.icon className="h-4 w-4 text-gray-500" />}
+                              <div>
+                                <div className="text-sm font-medium">{item.title}</div>
+                                {item.description && (
+                                  <div className="text-xs text-gray-500">{item.description}</div>
+                                )}
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-4 text-center text-gray-500">
+                      No results found
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            
+            {/* Right Side Actions */}
+            <div className="flex items-center space-x-4">
+              {/* Notifications */}
+              <Popover open={notificationOpen} onOpenChange={setNotificationOpen}>
+                <PopoverTrigger asChild>
+                  <Button 
+                    variant="ghost" 
+                    size="icon" 
+                    className="relative"
+                  >
+                    <Bell className="h-5 w-5 text-slate-700" />
+                    {unreadNotifications > 0 && (
+                      <div className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 flex items-center justify-center">
+                        <span className="text-[10px] font-medium text-white">{unreadNotifications}</span>
+                      </div>
+                    )}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-80 p-0" align="end" ref={notificationRef}>
+                  <div className="p-4 border-b">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold">Notifications</h3>
+                    </div>
+                  </div>
+                  <div className="max-h-96 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="py-8 text-center text-sm text-slate-500">
+                        <p>No notifications</p>
+                      </div>
+                    ) : (
+                      <div>
+                        {notifications.map((notification) => (
+                          <button
+                            key={notification.id}
+                            className={`w-full flex items-start gap-3 p-4 text-left hover:bg-slate-50 transition-colors ${
+                              !notification.read ? "bg-blue-50" : ""
+                            }`}
+                            onClick={() => handleNotificationClick(notification)}
+                          >
+                            <div className="flex-shrink-0 mt-0.5">
+                              {getNotificationIcon(notification.type)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className={`text-sm font-medium ${!notification.read ? "text-blue-900" : "text-slate-900"}`}>
+                                {notification.title}
+                              </p>
+                              <p className="text-xs text-slate-500 mt-1 line-clamp-2">
+                                {notification.content}
+                              </p>
+                              <p className="text-xs text-slate-400 mt-1">
+                                {formatTime(notification.created_at)}
+                              </p>
+                            </div>
+                            {!notification.read && (
+                              <div className="flex-shrink-0 h-2 w-2 bg-blue-500 rounded-full mt-1.5"></div>
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="p-3 border-t text-center">
+                    <Button variant="link" size="sm" className="text-blue-600" onClick={() => navigate('/patient-dashboard/notifications')}>
+                      View all notifications
+                    </Button>
+                  </div>
+                </PopoverContent>
+              </Popover>
+              
+              {/* Messages */}
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                className="relative"
+                onClick={() => navigate('/patient-dashboard/messages')}
+              >
+                <MessageCircle className="h-5 w-5 text-slate-700" />
+                {unreadMessages > 0 && (
+                  <div className="absolute -top-1 -right-1 h-4 w-4 rounded-full bg-red-500 flex items-center justify-center">
+                    <span className="text-[10px] font-medium text-white">{unreadMessages}</span>
+                  </div>
+                )}
+              </Button>
+              
+              {/* User Menu */}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="ghost" className="rounded-full hover:bg-slate-100 p-0 h-10 w-10">
+                    <Avatar className="h-8 w-8 border border-slate-200">
+                      <AvatarImage src={user?.avatar_url || ''} alt={user?.email || 'User'} />
+                      <AvatarFallback className="bg-blue-100 text-blue-600">
+                        {user?.email?.[0]?.toUpperCase() || 'U'}
+                      </AvatarFallback>
+                    </Avatar>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>My Account</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={() => navigate('/patient-dashboard/profile')}>
+                    <User className="mr-2 h-4 w-4" />
+                    Profile
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => navigate('/patient-dashboard/settings')}>
+                    <Settings className="mr-2 h-4 w-4" />
+                    Settings
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleSignout} className="text-red-600 focus:text-red-600">
+                    <LogOut className="mr-2 h-4 w-4" />
+                    Sign out
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          </div>
+        </header>
 
         {/* Main Content */}
-        <main className="flex-1 overflow-x-hidden dashboard-content">
+        <main className={cn(
+          "flex-1 overflow-auto dashboard-content",
+          "transition-all duration-200 ease-in-out"
+        )}>
           <Stabilizer>
-            <div className="container mx-auto py-6 px-4 sm:px-6 lg:px-8">
+            <div className="container mx-auto py-4 px-4 sm:px-6 lg:px-8">
               {children}
             </div>
           </Stabilizer>
         </main>
       </div>
+
+      {/* Mobile sidebar overlay */}
+      {isMobile && sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-50 z-10"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
 
       {/* Notification detail dialog */}
       <Dialog open={notificationDialogOpen} onOpenChange={setNotificationDialogOpen}>

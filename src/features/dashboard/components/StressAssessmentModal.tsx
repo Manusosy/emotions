@@ -16,7 +16,11 @@ import {
 import syncService from "@/services/syncService";
 import { saveStressAssessment } from "@/lib/db-direct";
 import { debugLocalAssessments, forceSync } from "@/utils/assessment-storage-check";
+import { isOnline } from "@/utils/network";
 import "./styles.css";
+import { supabase } from "@/lib/supabase";
+import ConnectionStatus from '@/components/ConnectionStatus';
+import { useConnection } from '@/contexts/ConnectionContext';
 
 // Common symptoms and triggers for stress
 const COMMON_SYMPTOMS = [
@@ -57,6 +61,7 @@ export default function StressAssessmentModal() {
   const [healthStatus, setHealthStatus] = useState("");
   const [healthColor, setHealthColor] = useState("#cccccc");
   const [offlineCount, setOfflineCount] = useState(0);
+  const { isConnected, connectionStatus, checkConnection } = useConnection();
   
   // Reset state when dialog is opened
   const handleOpen = () => {
@@ -70,47 +75,36 @@ export default function StressAssessmentModal() {
     setNotes("");
   };
   
-  // Check for offline assessments and try to sync on mount
+  // Replace the old useEffect hook with this new version
   useEffect(() => {
-    const checkOfflineAssessments = () => {
+    const loadOfflineAssessments = async () => {
       // Log stored assessments for debugging
       debugLocalAssessments();
       
       const count = syncService.getOfflineAssessmentCount();
       setOfflineCount(count);
       
-      if (count > 0 && user) {
-        // Try to sync when component mounts and user is available
-        syncService.syncOfflineAssessments()
-          .then(result => {
-            if (result.success) {
-              setOfflineCount(syncService.getOfflineAssessmentCount());
-            }
-          })
-          .catch(err => console.error("Error syncing:", err));
-      }
-    };
-    
-    checkOfflineAssessments();
-    
-    // Also set up online/offline listeners to sync when connection is restored
-    const handleOnline = () => {
-      console.log("Connection restored, attempting to sync");
-      if (user && syncService.hasOfflineAssessments()) {
-        syncService.syncOfflineAssessments()
-          .then(result => {
+      // If connected, check for offline assessments to sync
+      if (isConnected && count > 0 && user) {
+        try {
+          const result = await syncService.syncOfflineAssessments();
+          if (result.success) {
+            toast.success(`Successfully synced ${result.count} assessment(s)`);
             setOfflineCount(syncService.getOfflineAssessmentCount());
-          })
-          .catch(err => console.error("Error syncing on reconnect:", err));
+          } else if (result.count > 0) {
+            toast.warning(`Partially synced assessments. ${result.count} remaining.`);
+            setOfflineCount(result.count);
+          }
+        } catch (err) {
+          console.error("Error syncing assessments:", err);
+        }
+      } else if (count > 0 && !isConnected) {
+        toast.warning(`You have ${count} assessment(s) stored locally. They will sync when connection is restored.`);
       }
     };
     
-    window.addEventListener('online', handleOnline);
-    
-    return () => {
-      window.removeEventListener('online', handleOnline);
-    };
-  }, [user]);
+    loadOfflineAssessments();
+  }, [user, isConnected]);
   
   // Calculate score whenever responses change
   useEffect(() => {
@@ -291,67 +285,91 @@ export default function StressAssessmentModal() {
         score: Number(combinedScore.toFixed(1)), // Use one decimal place for consistency
         symptoms: symptoms.length > 0 ? symptoms : [], 
         triggers: triggers.length > 0 ? triggers : [], 
-        notes: "", 
+        notes: notes || "", 
         responses: formattedResponses
       };
       
       console.log("[Submit] Prepared assessment data:", assessmentData);
       
-      let saved = false;
-      let errorMessage = "";
+      let savedToDatabase = false;
       
-      // First attempt: Try direct database save
-      try {
-        console.log("[Submit] Attempting to save directly to database...");
-        const result = await saveStressAssessment(assessmentData);
-        
-        if (result) {
-          console.log("[Submit] Assessment saved to database successfully");
-          toast.success("Assessment saved successfully!");
-          saved = true;
-        } else {
-          console.log("[Submit] Database save failed or returned null");
-          errorMessage = "Database save failed";
-        }
-      } catch (dbError: any) {
-        console.error("[Submit] Database error:", dbError);
-        errorMessage = dbError.message || "Failed to save to database";
-      }
-      
-      // If database save failed, try local storage
-      if (!saved) {
-        console.log("[Submit] Database save failed, trying local storage...");
+      // Try to save to database if we're connected
+      if (isConnected) {
         try {
-          const localSaved = saveToLocalStorage();
-          if (localSaved) {
-            console.log("[Submit] Assessment saved to local storage");
-            toast.success("Assessment saved locally and will sync when online");
-            setOfflineCount(prev => prev + 1);
-            saved = true;
+          console.log("[Submit] Connected to server, attempting database save");
+          const result = await saveStressAssessment(assessmentData);
+          
+          if (result && !result.error) {
+            console.log("[Submit] Successfully saved to database:", result);
+            savedToDatabase = true;
+            toast.success("Assessment saved successfully!");
+            
+            // If we successfully saved to database and have offline assessments, try to sync them
+            if (syncService.hasOfflineAssessments()) {
+              console.log("[Submit] Syncing offline assessments after successful save");
+              try {
+                const syncResult = await syncService.syncOfflineAssessments();
+                if (syncResult.success) {
+                  setOfflineCount(syncService.getOfflineAssessmentCount());
+                  if (syncResult.count > 0) {
+                    toast.success(`Also synced ${syncResult.count} offline assessment(s)`);
+                  }
+                }
+              } catch (syncError) {
+                console.error("[Submit] Sync error after successful save:", syncError);
+              }
+            }
+            
+            // Reset state and close modal on successful save
+            setIsOpen(false);
+            setResponses([]);
+            setCombinedScore(0);
+            setShowResult(false);
+            setSymptoms([]);
+            setTriggers([]);
+            setNotes("");
           } else {
-            console.error("[Submit] Local storage save also failed");
-            errorMessage = "Could not save assessment locally";
+            console.error("[Submit] Database returned error:", result?.error);
+            throw new Error(result?.error?.message || "Failed to save to database");
           }
-        } catch (localError: any) {
-          console.error("[Submit] Local storage error:", localError);
-          errorMessage = "Failed to save assessment locally";
+        } catch (dbError) {
+          console.error("[Submit] Database save error:", dbError);
+          savedToDatabase = false;
         }
+      } else {
+        console.log("[Submit] Not connected to server, skipping database save attempt");
       }
       
-      // If saved (either to DB or locally), reset state and close modal
-      if (saved) {
-        setIsOpen(false);
-        setResponses([]);
-        setCurrentStep(0);
-        setSymptoms([]);
-        setTriggers([]);
-      } else {
-        // If all save attempts failed
-        toast.error(`Failed to save assessment: ${errorMessage}`);
+      // If we couldn't save to the database, save locally
+      if (!savedToDatabase) {
+        console.log("[Submit] Saving to local storage as fallback");
+        
+        try {
+          const localSaved = syncService.saveAssessmentLocally(assessmentData);
+          
+          if (localSaved) {
+            setOfflineCount(prevCount => prevCount + 1);
+            
+            // Show appropriate message based on connection state
+            if (!isConnected) {
+              toast.info("You appear to be offline. Assessment saved locally and will sync when connection is restored.");
+            } else {
+              toast.warning("Could not connect to the database. Assessment has been saved locally and will sync when the server is available.");
+            }
+            
+            // Still advance to results view
+            setShowResult(true);
+          } else {
+            toast.error("Failed to save assessment. Please try again later.");
+          }
+        } catch (localError) {
+          console.error("[Submit] Local storage error:", localError);
+          toast.error("Failed to save assessment. Please check your connection and try again.");
+        }
       }
-    } catch (error: any) {
+    } catch (error) {
       console.error("[Submit] General error:", error);
-      toast.error(`Error processing assessment: ${error.message || "Please try again"}`);
+      toast.error("An error occurred while saving your assessment");
     } finally {
       setIsSubmitting(false);
     }
@@ -449,13 +467,24 @@ export default function StressAssessmentModal() {
         )}
       </div>
       <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto p-0 gap-0 rounded-xl">
+        {/* Add ConnectionStatus component at the top */}
+        <ConnectionStatus className="m-2 mt-0" />
+        
+        {/* Existing offline connection indicator - can be removed if you want to use only ConnectionStatus */}
+        {connectionStatus === 'disconnected' && (
+          <div className="w-full bg-yellow-100 p-2 text-center text-xs font-medium text-yellow-800">
+            <CloudOff className="inline-block w-3 h-3 mr-1" />
+            Connection to server unavailable. You can still complete the assessment.
+          </div>
+        )}
+        
         {/* Progress bar at the top */}
         <div className="w-full h-1.5 bg-gray-100 rounded-t-xl">
           <div 
             className="h-full rounded-tl-xl transition-all duration-300 ease-in-out" 
             style={{ 
               width: `${progressPercentage}%`,
-              backgroundColor: BRAND_COLOR 
+              backgroundColor: BRAND_COLOR
             }}
           />
         </div>

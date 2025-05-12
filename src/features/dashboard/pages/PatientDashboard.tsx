@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import DashboardLayout from "../components/DashboardLayout";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
@@ -32,7 +32,12 @@ import {
   Activity,
   BarChart,
   HeartPulse,
-  Download
+  Download,
+  CloudOff,
+  Search,
+  Bell,
+  MessageCircle,
+  Brain
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +53,9 @@ import { jsPDF } from "jspdf";
 import 'jspdf-autotable';
 import { api } from "@/lib/api";
 import { errorLog } from "@/utils/environment";
+import syncService from "@/services/syncService";
+import { useConnection } from "@/contexts/ConnectionContext";
+import { Input } from "@/components/ui/input";
 
 // Extend jsPDF types to include autoTable
 declare module 'jspdf' {
@@ -61,7 +69,7 @@ declare module 'jspdf' {
 }
 
 // Define interfaces for appointment data
-interface Ambassador {
+interface MoodMentor {
   name: string;
   specialization: string;
 }
@@ -72,7 +80,7 @@ interface Appointment {
   time: string;
   type: string;
   status: string;
-  ambassador?: Ambassador;
+  moodMentor?: MoodMentor;
   notes?: string;
 }
 
@@ -101,6 +109,8 @@ export default function PatientDashboard() {
   const [hasAssessments, setHasAssessments] = useState(false);
   const [appointmentReports, setAppointmentReports] = useState<any[]>([]);
   const [reportsLoading, setReportsLoading] = useState(true);
+  const [localAssessments, setLocalAssessments] = useState<any[]>([]);
+  const { isConnected } = useConnection();
 
   useEffect(() => {
     let isMounted = true;
@@ -282,6 +292,39 @@ export default function PatientDashboard() {
     };
   }, [user, navigate]);
 
+  useEffect(() => {
+    const fetchLocalAssessments = () => {
+      const offlineAssessments = syncService.getOfflineAssessments();
+      setLocalAssessments(offlineAssessments);
+      
+      // If we have local assessments but no remote assessments, set hasAssessments to true
+      if (offlineAssessments.length > 0 && !hasAssessments) {
+        setHasAssessments(true);
+      }
+      
+      // If we have local assessments with stress scores, use the most recent one for the stress display
+      if (offlineAssessments.length > 0 && (!userMetrics.stressLevel || userMetrics.stressLevel === 0)) {
+        // Sort by createdAt date, descending
+        const sortedAssessments = [...offlineAssessments].sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
+        
+        // Get the most recent assessment
+        const latestAssessment = sortedAssessments[0];
+        
+        if (latestAssessment && latestAssessment.score) {
+          setUserMetrics(prev => ({
+            ...prev,
+            stressLevel: latestAssessment.score,
+            lastAssessmentDate: latestAssessment.createdAt,
+          }));
+        }
+      }
+    };
+    
+    fetchLocalAssessments();
+  }, [hasAssessments, userMetrics.stressLevel]);
+
   const handleUpdateProfile = async (updatedData: Partial<UserProfile>) => {
     try {
       const response = await api.put(`/api/patients/${user?.id}/profile`, updatedData);
@@ -348,13 +391,13 @@ export default function PatientDashboard() {
         appt.time,
         appt.type,
         appt.status,
-        appt.ambassador?.name || "N/A"
+        appt.moodMentor?.name || "N/A"
       ]);
       
       doc.text("Appointment History", 20, doc.autoTable.previous.finalY + 20);
       doc.autoTable({
         startY: doc.autoTable.previous.finalY + 30,
-        head: [["Date", "Time", "Type", "Status", "Ambassador"]],
+        head: [["Date", "Time", "Type", "Status", "Mood Mentor"]],
         body: appointmentData,
       });
       
@@ -386,9 +429,9 @@ export default function PatientDashboard() {
       doc.text(`Type: ${appointment.type}`, 20, 70);
       doc.text(`Status: ${appointment.status}`, 20, 80);
       
-      if (appointment.ambassador) {
-        doc.text(`Ambassador: ${appointment.ambassador.name}`, 20, 90);
-        doc.text(`Specialization: ${appointment.ambassador.specialization}`, 20, 100);
+      if (appointment.moodMentor) {
+        doc.text(`Mood Mentor: ${appointment.moodMentor.name}`, 20, 90);
+        doc.text(`Specialization: ${appointment.moodMentor.specialization}`, 20, 100);
       }
       
       if (appointment.notes) {
@@ -426,7 +469,7 @@ export default function PatientDashboard() {
         <div className="flex flex-col gap-1">
           <h1 className="text-2xl font-semibold">Dashboard</h1>
           <p className="text-slate-500">
-            Welcome back, {profile?.first_name || "User"}
+            Welcome back, {profile?.first_name || user?.full_name?.split(' ')[0] || "User"}
           </p>
         </div>
 
@@ -462,7 +505,15 @@ export default function PatientDashboard() {
                     <span className="text-sm font-medium">Stress Level</span>
                   </div>
                   {hasAssessments && userMetrics.stressLevel > 0 && (
-                    <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full">Tracked</span>
+                    <div className="flex items-center">
+                      <span className="text-xs bg-blue-100 text-blue-600 px-2 py-1 rounded-full mr-2">Tracked</span>
+                      {localAssessments.length > 0 && !isConnected && (
+                        <div className="text-xs bg-yellow-100 text-yellow-600 px-2 py-1 rounded-full flex items-center">
+                          <CloudOff className="w-3 h-3 mr-1" />
+                          Local
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
                 
@@ -484,7 +535,7 @@ export default function PatientDashboard() {
                       ></div>
                     </div>
                     <p className="text-xs text-slate-500">
-                      Based on your recent assessment
+                      Based on your {localAssessments.length > 0 && !isConnected ? 'local' : 'recent'} assessment
                     </p>
                   </>
                 ) : (
@@ -622,7 +673,7 @@ export default function PatientDashboard() {
                   <thead>
                     <tr style={{ backgroundColor: '#20C0F3' }} className="rounded-t-lg">
                       <th className="text-left text-sm font-medium text-white p-4 first:rounded-tl-lg">ID</th>
-                      <th className="text-left text-sm font-medium text-white p-4">M.H Ambassador</th>
+                      <th className="text-left text-sm font-medium text-white p-4">Mood Mentor</th>
                       <th className="text-left text-sm font-medium text-white p-4">Date</th>
                       <th className="text-left text-sm font-medium text-white p-4">Type</th>
                       <th className="text-left text-sm font-medium text-white p-4 last:rounded-tr-lg">Status</th>
@@ -702,21 +753,21 @@ export default function PatientDashboard() {
                             <td className="p-4">
                               <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center overflow-hidden">
-                                  {report.ambassador.avatar_url ? (
+                                  {report.moodMentor?.avatar_url ? (
                                     <img 
-                                      src={report.ambassador.avatar_url}
-                                      alt={report.ambassador.name}
+                                      src={report.moodMentor.avatar_url}
+                                      alt={report.moodMentor.name}
                                       className="w-full h-full object-cover"
                                     />
                                   ) : (
                                     <span className="text-blue-500 font-medium">
-                                      {report.ambassador.name.split(' ').map(n => n[0]).join('')}
+                                      {report.moodMentor?.name.split(' ').map(n => n[0]).join('')}
                                     </span>
                                   )}
                                 </div>
                                 <div>
-                                  <div className="font-medium">{report.ambassador.name}</div>
-                                  <div className="text-xs text-slate-500">{report.ambassador.specialization}</div>
+                                  <div className="font-medium">{report.moodMentor?.name}</div>
+                                  <div className="text-xs text-slate-500">{report.moodMentor?.specialization}</div>
                                 </div>
                               </div>
                             </td>
@@ -751,83 +802,259 @@ export default function PatientDashboard() {
           </Card>
         </div>
 
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-medium">Journal Entries</h2>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="text-blue-600"
-              onClick={() => navigate('/patient-dashboard/journal')}
-            >
-              View All
-            </Button>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {isLoading ? (
-              // Loading skeletons for journal entries
-              Array.from({ length: 3 }).map((_, index) => (
-                <Card key={index} className="hover:border-blue-200 cursor-pointer transition-colors">
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <Skeleton className="h-5 w-20" />
-                      <Skeleton className="h-3 w-24" />
-                    </div>
-                    <Skeleton className="h-5 w-3/4 mb-2" />
-                    <div className="space-y-2">
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-full" />
-                      <Skeleton className="h-4 w-2/3" />
-                    </div>
-                  </CardContent>
-                </Card>
-              ))
-            ) : recentJournalEntries.length === 0 ? (
-              // No entries message
-              <Card className="col-span-full p-5 text-center">
-                <CardContent>
-                  <p className="text-slate-500 mb-3">No journal entries yet</p>
-                  <Button 
-                    size="sm" 
-                    onClick={() => navigate('/patient-dashboard/journal/new')}
-                  >
-                    Create Your First Entry
-                  </Button>
-                </CardContent>
-              </Card>
-            ) : (
-              // Display actual journal entries
-              recentJournalEntries.map((entry) => (
-                <Card 
-                  key={entry.id} 
-                  className="hover:border-blue-200 cursor-pointer transition-colors"
-                  onClick={() => navigate(`/patient-dashboard/journal/${entry.id}`)}
+        {/* Journal Entries and Recent Assessments - Side by Side */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+          {/* Journal Entries Section */}
+          <Card className="overflow-hidden border shadow-sm h-full">
+            <CardHeader className="bg-white border-b pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg font-medium">Journal Entries</CardTitle>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-blue-600"
+                  onClick={() => navigate('/patient-dashboard/journal')}
                 >
-                  <CardContent className="p-5">
-                    <div className="flex items-center justify-between mb-3">
-                      <Badge variant="outline" className={
-                        entry.mood === 'Happy' || entry.mood === 'Grateful' ? "bg-green-50 border-green-200 text-green-700" :
-                        entry.mood === 'Calm' ? "bg-blue-50 border-blue-200 text-blue-700" :
-                        entry.mood === 'Anxious' || entry.mood === 'Worried' ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
-                        entry.mood === 'Sad' || entry.mood === 'Overwhelmed' ? "bg-red-50 border-red-200 text-red-700" :
-                        "bg-slate-50 border-slate-200 text-slate-700"
-                      }>
-                        {entry.mood || 'Neutral'}
-                      </Badge>
-                      <span className="text-xs text-slate-500">
-                        {new Date(entry.created_at).toLocaleDateString('default', { month: 'short', day: 'numeric', year: 'numeric' })}
-                      </span>
+                  View All
+                </Button>
+              </div>
+              <CardDescription className="text-slate-500 text-sm">
+                Record your thoughts and feelings to track your emotional journey.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4 overflow-hidden">
+              {isLoading ? (
+                // Loading skeletons for journal entries
+                <div className="flex gap-4 overflow-x-auto pb-2">
+                  {Array.from({ length: 2 }).map((_, index) => (
+                    <div key={index} className="min-w-[240px] w-[calc(50%-8px)]">
+                      <Card className="border border-slate-200">
+                        <CardContent className="p-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <Skeleton className="h-5 w-20" />
+                            <Skeleton className="h-3 w-24" />
+                          </div>
+                          <Skeleton className="h-5 w-3/4 mb-2" />
+                          <div className="space-y-2">
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-2/3" />
+                          </div>
+                        </CardContent>
+                      </Card>
                     </div>
-                    <h3 className="font-medium mb-2 line-clamp-1">{entry.title || 'Untitled Entry'}</h3>
-                    <p className="text-sm text-slate-600 line-clamp-3">
-                      {entry.content ? entry.content.replace(/<[^>]*>/g, '') : 'No content'}
-                    </p>
-                  </CardContent>
-                </Card>
-              ))
-            )}
-          </div>
+                  ))}
+                </div>
+              ) : recentJournalEntries.length === 0 ? (
+                // No entries message
+                <div className="text-center py-8">
+                  <div className="bg-blue-50 rounded-full p-3 inline-flex mb-3">
+                    <FileText className="h-6 w-6 text-blue-500" />
+                  </div>
+                  <h3 className="font-medium mb-2">No journal entries yet</h3>
+                  <p className="text-slate-500 text-sm mb-4 max-w-md mx-auto">
+                    Start journaling to track your thoughts and feelings.
+                  </p>
+                  <Button 
+                    onClick={() => navigate('/patient-dashboard/journal/new')}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <FileText className="h-4 w-4 mr-2" />
+                    Create First Entry
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  {/* Scrollable journal entries with horizontal scroll */}
+                  <div className="relative">
+                    <div className="flex gap-4 overflow-x-auto pb-2 snap-x">
+                      {recentJournalEntries.slice(0, 6).map((entry) => (
+                        <div 
+                          key={entry.id} 
+                          className="min-w-[240px] w-[calc(50%-8px)] snap-start"
+                        >
+                          <Card 
+                            className="h-full hover:shadow-md cursor-pointer transition-all border border-slate-200"
+                            onClick={() => navigate(`/patient-dashboard/journal/${entry.id}`)}
+                          >
+                            <CardContent className="p-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <Badge variant="outline" className={
+                                  entry.mood === 'Happy' || entry.mood === 'Grateful' ? "bg-green-50 border-green-200 text-green-700" :
+                                  entry.mood === 'Calm' ? "bg-blue-50 border-blue-200 text-blue-700" :
+                                  entry.mood === 'Anxious' || entry.mood === 'Worried' ? "bg-yellow-50 border-yellow-200 text-yellow-700" :
+                                  entry.mood === 'Sad' || entry.mood === 'Overwhelmed' ? "bg-red-50 border-red-200 text-red-700" :
+                                  "bg-slate-50 border-slate-200 text-slate-700"
+                                }>
+                                  {entry.mood || 'Neutral'}
+                                </Badge>
+                                <span className="text-xs text-slate-500">
+                                  {new Date(entry.created_at).toLocaleDateString('default', { month: 'short', day: 'numeric' })}
+                                </span>
+                              </div>
+                              <h3 className="font-medium mb-2 line-clamp-1">{entry.title || 'Untitled Entry'}</h3>
+                              <p className="text-sm text-slate-600 line-clamp-3">
+                                {entry.content ? entry.content.replace(/<[^>]*>/g, '') : 'No content'}
+                              </p>
+                            </CardContent>
+                          </Card>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    {/* Scroll indicators/buttons could be added here */}
+                    {recentJournalEntries.length > 2 && (
+                      <div className="flex items-center justify-center mt-3 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="rounded-full text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                          onClick={() => navigate('/patient-dashboard/journal/new')}
+                        >
+                          <FileText className="h-4 w-4 mr-2" />
+                          New Entry
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Recent Assessments Section */}
+          <Card className="overflow-hidden border shadow-sm h-full">
+            <CardHeader className="bg-white border-b pb-3">
+              <div className="flex items-center justify-between">
+                <CardTitle className="text-lg font-medium">Recent Assessments</CardTitle>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  className="text-blue-600"
+                  onClick={() => navigate('/patient-dashboard/reports')}
+                >
+                  View All
+                </Button>
+              </div>
+              <CardDescription className="text-slate-500 text-sm">
+                Track your stress levels and emotional health progress.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="p-4">
+              {localAssessments.length > 0 ? (
+                <div className="overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="border-b">
+                          <th className="text-left py-2 px-3 text-sm font-medium text-slate-500">Date & Time</th>
+                          <th className="text-left py-2 px-3 text-sm font-medium text-slate-500">Health Score</th>
+                          <th className="text-left py-2 px-3 text-sm font-medium text-slate-500">Stress Level</th>
+                          <th className="text-right py-2 px-3 text-sm font-medium text-slate-500">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {localAssessments.slice(0, 5).map((assessment) => (
+                          <tr 
+                            key={assessment.id} 
+                            className="hover:bg-slate-50 cursor-pointer transition-colors"
+                            onClick={() => navigate('/patient-dashboard/reports')}
+                          >
+                            <td className="py-3 px-3 text-sm">
+                              {new Date(assessment.createdAt).toLocaleString(undefined, {
+                                month: 'short', 
+                                day: 'numeric', 
+                                hour: '2-digit', 
+                                minute: '2-digit'
+                              })}
+                              {!isConnected && (
+                                <Badge variant="outline" className="ml-2 bg-yellow-50 text-yellow-700 border-yellow-200 text-xs">
+                                  <CloudOff className="w-2.5 h-2.5 mr-1" />
+                                  Local
+                                </Badge>
+                              )}
+                            </td>
+                            <td className="py-3 px-3 text-sm">
+                              <div className="flex items-center gap-2">
+                                <div className={`h-2.5 w-2.5 rounded-full ${
+                                  assessment.score < 3 ? 'bg-green-500' : 
+                                  assessment.score < 5 ? 'bg-orange-400' :
+                                  assessment.score < 7 ? 'bg-amber-500' :
+                                  'bg-red-500'
+                                }`}></div>
+                                <span className="font-medium">
+                                  {Math.round((10 - assessment.score) * 10)}%
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-sm">
+                              <div className="w-full bg-slate-200 rounded-full h-1.5 max-w-24">
+                                <div 
+                                  className="h-1.5 rounded-full"
+                                  style={{ 
+                                    width: `${assessment.score * 10}%`,
+                                    backgroundColor: assessment.score < 3 ? '#4ade80' : 
+                                                  assessment.score < 5 ? '#fb923c' : 
+                                                  assessment.score < 7 ? '#facc15' : 
+                                                  assessment.score < 8 ? '#ef4444' : '#b91c1c'
+                                  }}
+                                ></div>
+                              </div>
+                              <span className="text-xs text-slate-500 mt-1 block">
+                                {assessment.score.toFixed(1)}/10
+                              </span>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <Badge className={`
+                                px-2 py-1 text-xs
+                                ${assessment.score < 3 ? 'bg-green-100 text-green-800' : 
+                                  assessment.score < 5 ? 'bg-orange-100 text-orange-800' :
+                                  assessment.score < 7 ? 'bg-amber-100 text-amber-800' :
+                                  'bg-red-100 text-red-800'}
+                              `}>
+                                {assessment.score < 3 ? 'Low Stress' : 
+                                assessment.score < 5 ? 'Moderate' :
+                                assessment.score < 7 ? 'High' : 'Very High'}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  
+                  <div className="flex justify-center mt-4">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="rounded-full text-blue-600 border-blue-200 hover:bg-blue-50 hover:text-blue-700"
+                      onClick={() => navigate('/patient-dashboard/reports')}
+                    >
+                      <Activity className="h-4 w-4 mr-2" />
+                      Take New Assessment
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-8">
+                  <div className="bg-blue-50 rounded-full p-3 inline-flex mb-3">
+                    <Activity className="h-6 w-6 text-blue-500" />
+                  </div>
+                  <h3 className="font-medium mb-2">No assessments yet</h3>
+                  <p className="text-slate-500 text-sm mb-4 max-w-md mx-auto">
+                    Complete your first assessment to track your emotional health.
+                  </p>
+                  <Button 
+                    onClick={() => navigate('/patient-dashboard/reports')}
+                    className="bg-blue-600 hover:bg-blue-700"
+                  >
+                    <Activity className="h-4 w-4 mr-2" />
+                    Take Assessment
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </div>
     </DashboardLayout>

@@ -10,7 +10,7 @@ import { useAuth } from '@/hooks/use-auth';
 import { format, addDays } from 'date-fns';
 import { toast } from '@/components/ui/use-toast';
 
-interface Ambassador {
+interface MoodMentor {
   id: string;
   name: string;
   credentials: string;
@@ -33,13 +33,13 @@ interface SupportGroup {
 const FavoritesPage = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [activeTab, setActiveTab] = useState('ambassadors');
+  const [activeTab, setActiveTab] = useState('moodMentors');
 
   // Get today's date for realistic availability dates
   const today = new Date();
   
-  // Ambassador data that matches the design in the image
-  const favoriteAmbassadors: Ambassador[] = [
+  // Mood Mentor data that matches the design in the image
+  const favoriteMoodMentors: MoodMentor[] = [
     {
       id: '1',
       name: 'Dr. Ruby Perrin',
@@ -65,7 +65,7 @@ const FavoritesPage = () => {
     {
       id: '3',
       name: 'Dr. Deborah Angel',
-      credentials: 'MA in Counseling Psychology, Mental Health Ambassador',
+      credentials: 'MA in Counseling Psychology, Mental Health Mood Mentor',
       specialty: 'Relationship & Family Specialist',
       verified: true,
       avatar: 'https://images.unsplash.com/photo-1594824476967-48c8b964273f?ixlib=rb-1.2.1&auto=format&fit=crop&w=300&q=80',
@@ -100,12 +100,12 @@ const FavoritesPage = () => {
     }
   ];
 
-  const handleViewProfile = (ambassadorId: string) => {
-    navigate(`/ambassadors/${ambassadorId}`);
+  const handleViewProfile = (moodMentorId: string) => {
+    navigate(`/mood-mentors/${moodMentorId}`);
   };
 
-  const handleBookNow = (ambassadorId: string) => {
-    navigate(`/booking?ambassador=${ambassadorId}`);
+  const handleBookNow = (moodMentorId: string) => {
+    navigate(`/booking?moodMentor=${moodMentorId}`);
   };
 
   const handleRemoveFavorite = (id: string) => {
@@ -117,8 +117,8 @@ const FavoritesPage = () => {
     });
   };
 
-  const handleBrowseAmbassadors = () => {
-    navigate('/ambassadors');
+  const handleBrowseMoodMentors = () => {
+    navigate('/mood-mentors');
   };
 
   return (
@@ -138,11 +138,11 @@ const FavoritesPage = () => {
           </div>
         </div>
         
-        <Tabs defaultValue="ambassadors" className="w-full" value={activeTab} onValueChange={setActiveTab}>
+        <Tabs defaultValue="moodMentors" className="w-full" value={activeTab} onValueChange={setActiveTab}>
           <TabsList className="mb-6">
-            <TabsTrigger value="ambassadors" className="gap-2">
+            <TabsTrigger value="moodMentors" className="gap-2">
               <Users className="h-4 w-4" />
-              Favorite Ambassadors
+              Favorite Mood Mentors
             </TabsTrigger>
             <TabsTrigger value="groups" className="gap-2">
               <Users className="h-4 w-4" />
@@ -150,16 +150,16 @@ const FavoritesPage = () => {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="ambassadors">
-            {favoriteAmbassadors.length > 0 ? (
+          <TabsContent value="moodMentors">
+            {favoriteMoodMentors.length > 0 ? (
               <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
-                {favoriteAmbassadors.map((ambassador) => (
-                  <Card key={ambassador.id} className="overflow-hidden border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
+                {favoriteMoodMentors.map((moodMentor) => (
+                  <Card key={moodMentor.id} className="overflow-hidden border border-gray-200 rounded-2xl shadow-sm hover:shadow-md transition-shadow">
                     <CardContent className="p-0">
                       <div className="relative">
                         <div 
                           className="absolute top-4 right-4 p-2 bg-white rounded-full shadow-md cursor-pointer hover:bg-red-50 transition-colors"
-                          onClick={() => handleRemoveFavorite(ambassador.id)}
+                          onClick={() => handleRemoveFavorite(moodMentor.id)}
                         >
                           <Heart className="h-5 w-5 text-red-500 fill-red-500" />
                         </div>
@@ -167,12 +167,12 @@ const FavoritesPage = () => {
                           <div className="relative mb-2">
                             <div className="w-24 h-24 rounded-full overflow-hidden border-4 border-white shadow-md">
                               <img 
-                                src={ambassador.avatar}
-                                alt={ambassador.name}
+                                src={moodMentor.avatar}
+                                alt={moodMentor.name}
                                 className="w-full h-full object-cover"
                               />
                             </div>
-                            {ambassador.verified && (
+                            {moodMentor.verified && (
                               <div className="absolute bottom-0 right-0 bg-green-500 rounded-full p-1 text-white border-2 border-white">
                                 <Check className="h-4 w-4" />
                               </div>
@@ -180,14 +180,14 @@ const FavoritesPage = () => {
                           </div>
                           <div className="flex items-center justify-center gap-1 mb-1">
                             <h3 className="text-xl font-bold text-gray-900">
-                              {ambassador.name}
+                              {moodMentor.name}
                             </h3>
-                            {ambassador.verified && (
+                            {moodMentor.verified && (
                               <Check className="h-5 w-5 text-green-500" />
                             )}
                           </div>
-                          <p className="text-blue-600 mb-1">{ambassador.specialty}</p>
-                          <p className="text-gray-600 text-sm">{ambassador.credentials}</p>
+                          <p className="text-blue-600 mb-1">{moodMentor.specialty}</p>
+                          <p className="text-gray-600 text-sm">{moodMentor.credentials}</p>
                         </div>
                         
                         <div className="p-4 space-y-3">
@@ -195,7 +195,7 @@ const FavoritesPage = () => {
                             <Calendar className="h-6 w-6 text-blue-500" />
                             <div>
                               <p className="text-sm text-gray-500">Next Availability :</p>
-                              <p className="font-medium text-gray-700">{ambassador.nextAvailability}</p>
+                              <p className="font-medium text-gray-700">{moodMentor.nextAvailability}</p>
                             </div>
                           </div>
                           
@@ -203,13 +203,13 @@ const FavoritesPage = () => {
                             <MapPin className="h-6 w-6 text-blue-500" />
                             <div>
                               <p className="text-sm text-gray-500">Location :</p>
-                              <p className="font-medium text-gray-700">{ambassador.location}</p>
+                              <p className="font-medium text-gray-700">{moodMentor.location}</p>
                             </div>
                           </div>
                           
                           <div className="bg-blue-50 p-3 rounded-md">
                             <p className="text-sm text-center text-blue-800">
-                              Last Book on {ambassador.lastBooking}
+                              Last Book on {moodMentor.lastBooking}
                             </p>
                           </div>
                           
@@ -217,13 +217,13 @@ const FavoritesPage = () => {
                             <Button 
                               variant="outline" 
                               className="flex-1 rounded-full border-gray-300 hover:bg-gray-50"
-                              onClick={() => handleViewProfile(ambassador.id)}
+                              onClick={() => handleViewProfile(moodMentor.id)}
                             >
                               View Profile
                             </Button>
                             <Button 
                               className="flex-1 rounded-full bg-blue-600 hover:bg-blue-700"
-                              onClick={() => handleBookNow(ambassador.id)}
+                              onClick={() => handleBookNow(moodMentor.id)}
                             >
                               Book Now
                             </Button>
@@ -239,13 +239,13 @@ const FavoritesPage = () => {
                 <Heart className="h-16 w-16 mx-auto text-gray-300 mb-4" />
                 <h3 className="text-xl font-medium text-gray-700 mb-2">No favorites yet</h3>
                 <p className="text-gray-500 max-w-md mx-auto mb-6">
-                  You haven't added any favorite ambassadors yet. Browse our ambassadors and add some to your favorites.
+                  You haven't added any favorite mood mentors yet. Browse our mood mentors and add some to your favorites.
                 </p>
                 <Button 
                   className="bg-blue-600 hover:bg-blue-700"
-                  onClick={handleBrowseAmbassadors}
+                  onClick={handleBrowseMoodMentors}
                 >
-                  Browse Ambassadors
+                  Browse Mood Mentors
                 </Button>
               </div>
             )}

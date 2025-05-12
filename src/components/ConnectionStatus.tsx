@@ -1,7 +1,7 @@
 import React from 'react';
-import { useConnection } from '../context/ConnectionProvider';
-import { Button } from './ui/button';
-import { AlertCircle, CheckCircle, WifiOff } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { WifiOff, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
+import { useConnection } from '@/contexts/ConnectionContext';
 
 interface ConnectionStatusProps {
   showDetails?: boolean;
@@ -63,7 +63,17 @@ const ConnectionStatus: React.FC<ConnectionStatusProps> = ({
           variant={isConnected ? "outline" : "default"}
           className={`ml-2 ${isChecking ? 'opacity-50' : ''}`}
         >
-          {isChecking ? 'Checking...' : 'Retry'}
+          {isChecking ? (
+            <>
+              <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
+              Checking...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-4 w-4 mr-1" />
+              Retry
+            </>
+          )}
         </Button>
       </div>
     </div>

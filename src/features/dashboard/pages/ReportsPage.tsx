@@ -803,7 +803,7 @@ export default function ReportsPage() {
                               
                               <li className="flex items-start gap-2">
                                 <CheckCircle className="w-4 h-4 text-green-500 mt-0.5" />
-                                <span>Connect with our <Button variant="link" className="h-auto p-0 text-blue-600" onClick={() => navigate("/ambassadors")}>Ambassadors</Button> for personalized support</span>
+                                <span>Connect with our <Button variant="link" className="h-auto p-0 text-blue-600" onClick={() => navigate("/mood-mentors")}>Mood Mentors</Button> for personalized support</span>
                               </li>
                             </ul>
                           </div>
@@ -1548,7 +1548,7 @@ export default function ReportsPage() {
                                     size="sm" 
                                     variant="outline"
                                     className="text-purple-600 border-purple-200"
-                                    onClick={() => navigate("/ambassadors")}
+                                    onClick={() => navigate("/mood-mentors")}
                                   >
                                     Find Support
                                   </Button>

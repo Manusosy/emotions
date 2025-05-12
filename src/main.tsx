@@ -5,6 +5,8 @@ import App from './App';
 import ErrorBoundary from './components/ErrorBoundary';
 import './styles/index.css';
 import { AuthProvider } from './hooks/use-auth';
+import { ConnectionProvider } from './contexts/ConnectionContext';
+import ConnectionSyncHandler from './components/ConnectionSyncHandler';
 
 // Global error handling with more detailed logging
 window.addEventListener('error', (event) => {
@@ -56,7 +58,10 @@ try {
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <AuthProvider>
-            <App />
+            <ConnectionProvider>
+              <ConnectionSyncHandler />
+              <App />
+            </ConnectionProvider>
           </AuthProvider>
         </QueryClientProvider>
       </ErrorBoundary>

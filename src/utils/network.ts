@@ -226,6 +226,195 @@ export function getSafeLocalStorage(key: string): any {
   }
 }
 
+/**
+ * Perform a direct API connectivity check
+ */
+export async function checkApiDirectly(): Promise<{
+  apiConnected: boolean;
+  databaseConnected: boolean;
+  error?: string;
+  details?: any;
+}> {
+  try {
+    // First try the simple API test endpoint that doesn't require database connectivity
+    let apiConnected = false;
+    try {
+      // Use a direct fetch with text parsing first to detect HTML responses
+      const simpleResponse = await fetch('/api/test', {
+        method: 'GET',
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+        signal: AbortSignal.timeout(3000)
+      });
+      
+      // Check content type for HTML responses
+      const contentType = simpleResponse.headers.get('content-type') || '';
+      if (contentType.includes('text/html')) {
+        console.warn('API returned HTML instead of JSON - server may be misconfigured');
+        // Try to get the HTML to see if it's a server error page
+        const htmlText = await simpleResponse.text();
+        if (htmlText.includes('<!DOCTYPE html>')) {
+          return {
+            apiConnected: false,
+            databaseConnected: false,
+            error: 'Server returned HTML instead of API response (possible server error)',
+            details: {
+              htmlResponse: htmlText.substring(0, 150) + '...' // Just the beginning for diagnostics
+            }
+          };
+        }
+      }
+      
+      if (simpleResponse.ok) {
+        apiConnected = true;
+        console.log('Simple API test endpoint responded successfully');
+      } else {
+        console.warn(`Simple API test failed with status: ${simpleResponse.status}`);
+      }
+    } catch (simpleTestError: any) {
+      console.warn('Simple API test endpoint failed:', simpleTestError);
+      // Continue with other checks even if simple test fails
+    }
+
+    // Try the most basic DB connection test
+    const dbDirectCheck = async () => {
+      try {
+        const dbResponse = await fetch('/api/test-db', {
+          method: 'GET', 
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          signal: AbortSignal.timeout(5000)
+        });
+        
+        // Check if we got an HTML response instead of JSON
+        const contentType = dbResponse.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.warn('Database test endpoint returned HTML instead of JSON');
+          const htmlText = await dbResponse.text();
+          throw new Error('Server returned HTML instead of JSON response');
+        }
+        
+        // Parse JSON response
+        const responseText = await dbResponse.text();
+        let dbData;
+        
+        try {
+          dbData = JSON.parse(responseText);
+        } catch (parseError) {
+          console.error('Failed to parse DB test response:', responseText.substring(0, 150));
+          throw new Error(`Invalid JSON response: ${responseText.substring(0, 50)}...`);
+        }
+        
+        return { 
+          connected: dbData.success === true,
+          error: dbData.success ? undefined : dbData.error?.message,
+          details: dbData
+        };
+      } catch (dbTestError: any) {
+        return { 
+          connected: false, 
+          error: dbTestError.message
+        };
+      }
+    };
+    
+    // Try the DB fix endpoint if simple tests fail
+    const tryDbFix = async () => {
+      try {
+        const fixResponse = await fetch('/api/db-fix', {
+          method: 'GET',
+          cache: 'no-store',
+          headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-cache' },
+          signal: AbortSignal.timeout(10000)
+        });
+        
+        // Check if we got an HTML response
+        const contentType = fixResponse.headers.get('content-type') || '';
+        if (contentType.includes('text/html')) {
+          console.warn('DB fix endpoint returned HTML instead of JSON');
+          throw new Error('Server returned HTML instead of JSON response');
+        }
+        
+        const responseText = await fixResponse.text();
+        let fixData;
+        
+        try {
+          fixData = JSON.parse(responseText);
+          return {
+            success: fixData.success === true,
+            error: fixData.success ? undefined : fixData.error?.message,
+            details: fixData
+          };
+        } catch (parseError) {
+          console.error('Failed to parse DB fix response:', responseText.substring(0, 150));
+          throw new Error(`Invalid JSON response from fix endpoint: ${responseText.substring(0, 50)}...`);
+        }
+      } catch (fixError: any) {
+        return {
+          success: false,
+          error: fixError.message
+        };
+      }
+    };
+    
+    // Now test database connectivity directly
+    const dbCheck = await dbDirectCheck();
+    
+    // If the database check failed, try the fix endpoint
+    if (!dbCheck.connected) {
+      console.log('Database check failed, attempting connection fix...');
+      const fixResult = await tryDbFix();
+      
+      // If fix was successful, check the database again
+      if (fixResult.success) {
+        console.log('Database fix succeeded, checking connection again...');
+        const recheckDb = await dbDirectCheck();
+        
+        return {
+          apiConnected: true,
+          databaseConnected: recheckDb.connected,
+          error: recheckDb.connected ? undefined : 'Database connection fixed but still not working',
+          details: { 
+            fixSuccess: true, 
+            dbRecheck: recheckDb.details 
+          }
+        };
+      } else {
+        return {
+          apiConnected: apiConnected,
+          databaseConnected: false,
+          error: fixResult.error || 'Failed to fix database connection',
+          details: { fixAttempted: true, fixSuccess: false }
+        };
+      }
+    }
+    
+    // If database check succeeded immediately
+    if (dbCheck.connected) {
+      return {
+        apiConnected: true,
+        databaseConnected: true,
+        details: dbCheck.details
+      };
+    }
+    
+    // Fallback response if we reached this point
+    return {
+      apiConnected: apiConnected,
+      databaseConnected: false,
+      error: dbCheck.error || 'Unknown database connection issue',
+      details: dbCheck.details
+    };
+  } catch (error: any) {
+    // Something unexpected happened during our checks
+    return {
+      apiConnected: false, 
+      databaseConnected: false,
+      error: error.message || 'Network check failed'
+    };
+  }
+}
+
 // Create the cache storage in window
 declare global {
   interface Window {

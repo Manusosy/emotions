@@ -63,7 +63,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { moodMentorService } from "@/lib/moodMentorService";
 
 // Replace hardcoded ambassador profiles with a type
-interface AmbassadorProfile {
+interface MoodMentorProfile {
   id: string;
   name: string;
   specialty: string;
@@ -199,12 +199,12 @@ export default function AppointmentsPage() {
   const [cancelAppointmentId, setCancelAppointmentId] = useState<string | null>(null);
   const [cancellationReason, setCancellationReason] = useState<string>('');
 
-  const [ambassadors, setAmbassadors] = useState<AmbassadorProfile[]>([]);
-  const [loadingAmbassadors, setLoadingAmbassadors] = useState(false);
+  const [moodMentors, setMoodMentors] = useState<MoodMentorProfile[]>([]);
+  const [loadingMoodMentors, setLoadingMoodMentors] = useState(false);
 
   useEffect(() => {
     fetchAppointments();
-    fetchAmbassadors();
+    fetchMoodMentors();
   }, [user?.id, activeTab, startDate, endDate]);
 
   const fetchAppointments = async () => {
@@ -262,16 +262,16 @@ export default function AppointmentsPage() {
     }
   };
 
-  const fetchAmbassadors = async () => {
+  const fetchMoodMentors = async () => {
     try {
-      setLoadingAmbassadors(true);
+      setLoadingMoodMentors(true);
       devLog('Fetching mood mentors');
       
       const { data, error } = await moodMentorService.getMentorProfiles();
       
       if (error) throw new Error(error);
       
-      const ambassadorProfiles: AmbassadorProfile[] = data.map(mentor => ({
+      const moodMentorProfiles: MoodMentorProfile[] = data.map(mentor => ({
         id: mentor.id,
         name: mentor.full_name,
         specialty: mentor.specialty || 'General Mental Health',
@@ -286,12 +286,12 @@ export default function AppointmentsPage() {
         education: mentor.education?.[0]?.university
       }));
       
-      setAmbassadors(ambassadorProfiles);
+      setMoodMentors(moodMentorProfiles);
     } catch (error) {
-      errorLog('Error fetching ambassadors:', error);
-      toast.error('Failed to load available ambassadors');
+      errorLog('Error fetching mood mentors:', error);
+      toast.error('Failed to load available mood mentors');
     } finally {
-      setLoadingAmbassadors(false);
+      setLoadingMoodMentors(false);
     }
   };
 
@@ -311,20 +311,20 @@ export default function AppointmentsPage() {
     setDateFilterOpen(false);
   };
 
-  const handleBookWithAmbassador = (ambassadorId: string) => {
-    navigate(`/booking?ambassadorId=${ambassadorId}`);
+  const handleBookWithMoodMentor = (moodMentorId: string) => {
+    navigate(`/booking?moodMentorId=${moodMentorId}`);
   };
 
-  const handleViewAmbassadorProfile = (ambassadorId: string) => {
-    // Find the ambassador by ID to get their name
-    const ambassador = ambassadors.find(a => a.id === ambassadorId);
-    if (ambassador) {
-      // Use the ambassador's name in lowercase, replacing spaces with hyphens
-      const nameSlug = ambassador.name.toLowerCase().replace(/ /g, '-');
-      navigate(`/ambassadors/${nameSlug}?id=${ambassadorId}`);
+  const handleViewMoodMentorProfile = (moodMentorId: string) => {
+    // Find the mood mentor by ID to get their name
+    const moodMentor = moodMentors.find(m => m.id === moodMentorId);
+    if (moodMentor) {
+      // Use the mood mentor's name in lowercase, replacing spaces with hyphens
+      const nameSlug = moodMentor.name.toLowerCase().replace(/ /g, '-');
+      navigate(`/mood-mentors/${nameSlug}?id=${moodMentorId}`);
     } else {
       // Fallback to ID if name not found
-      navigate(`/ambassadors/${ambassadorId}`);
+      navigate(`/mood-mentors/${moodMentorId}`);
     }
   };
 
@@ -373,7 +373,7 @@ export default function AppointmentsPage() {
             <h3 className="text-xl font-medium mb-3">No {activeTab} appointments</h3>
             <p className="text-gray-500 mb-8 max-w-md">
               {activeTab === "upcoming" 
-                ? "You don't have any upcoming appointments scheduled. Book an appointment with one of our ambassadors to get started with your mental health journey."
+                ? "You don't have any upcoming appointments scheduled. Book an appointment with one of our mood mentors to get started with your mental health journey."
                 : activeTab === "cancelled" 
                 ? "You don't have any cancelled appointments. All your cancelled appointments will appear here for reference."
                 : "You don't have any completed appointments yet. After completing sessions, they will appear here for your records."}
@@ -571,11 +571,11 @@ export default function AppointmentsPage() {
     return <Badge className="ml-1 bg-blue-600 hover:bg-blue-600 text-white">{count}</Badge>;
   };
 
-  const renderAmbassadorProfiles = () => {
-    if (loadingAmbassadors) {
+  const renderMoodMentorProfiles = () => {
+    if (loadingMoodMentors) {
       return (
         <Card className="mt-8 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Mental Health Ambassadors</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Mental Health Mood Mentors</h2>
           <div className="space-y-6">
             {[1, 2, 3].map((i) => (
               <div key={i} className="flex flex-col gap-4">
@@ -599,16 +599,16 @@ export default function AppointmentsPage() {
       );
     }
     
-    if (ambassadors.length === 0) {
+    if (moodMentors.length === 0) {
       return (
         <Card className="mt-8 p-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-6">Mental Health Ambassadors</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-6">Mental Health Mood Mentors</h2>
           <div className="py-8 text-center">
-            <p className="text-gray-500 mb-4">No ambassadors available at the moment</p>
+            <p className="text-gray-500 mb-4">No mood mentors available at the moment</p>
             <Button 
               variant="outline" 
               className="text-blue-600 border-blue-200"
-              onClick={fetchAmbassadors}
+              onClick={fetchMoodMentors}
             >
               <RefreshCw className="w-4 h-4 mr-2" />
               Refresh List
@@ -621,38 +621,38 @@ export default function AppointmentsPage() {
     return (
       <Card className="mt-8 p-6">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-semibold text-gray-900">Mental Health Ambassadors</h2>
+          <h2 className="text-xl font-semibold text-gray-900">Mental Health Mood Mentors</h2>
           <Button
             variant="outline"
             size="sm"
             className="text-blue-600 border-blue-200"
-            onClick={fetchAmbassadors}
+            onClick={fetchMoodMentors}
           >
             <RefreshCw className="w-4 h-4 mr-2" />
             Refresh
           </Button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {ambassadors.map((ambassador) => (
-            <div key={ambassador.id} className="border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+          {moodMentors.map((moodMentor) => (
+            <div key={moodMentor.id} className="border border-gray-100 rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-shadow">
               <div className="p-4">
                 <div className="flex gap-3 items-start">
                   <Avatar className="h-14 w-14 rounded-full border border-blue-100">
-                    <AvatarImage src={ambassador.avatar} />
+                    <AvatarImage src={moodMentor.avatar} />
                     <AvatarFallback className="bg-blue-100 text-blue-700">
-                      {ambassador.name.charAt(0)}
+                      {moodMentor.name.charAt(0)}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex-1">
-                    <h4 className="font-semibold text-gray-900">{ambassador.name}</h4>
-                    <p className="text-sm text-slate-500">{ambassador.specialty}</p>
+                    <h4 className="font-semibold text-gray-900">{moodMentor.name}</h4>
+                    <p className="text-sm text-slate-500">{moodMentor.specialty}</p>
                     
                     <div className="flex items-center gap-1 mt-1">
                       <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
-                      <span className="text-xs font-medium">{ambassador.rating}</span>
-                      <span className="text-xs text-slate-500">({ambassador.reviews} reviews)</span>
+                      <span className="text-xs font-medium">{moodMentor.rating}</span>
+                      <span className="text-xs text-slate-500">({moodMentor.reviews} reviews)</span>
                       
-                      {ambassador.available && (
+                      {moodMentor.available && (
                         <Badge variant="outline" className="ml-2 text-xs bg-green-50 text-green-700 border-green-200">
                           <CheckCircle2 className="w-3 h-3 mr-1" />
                           Available
@@ -664,16 +664,16 @@ export default function AppointmentsPage() {
                 
                 {/* Contact information */}
                 <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-500">
-                  {ambassador.email && (
+                  {moodMentor.email && (
                     <div className="flex items-center">
                       <Mail className="w-3.5 h-3.5 mr-1 text-gray-400" />
-                      <span className="truncate">{ambassador.email}</span>
+                      <span className="truncate">{moodMentor.email}</span>
                     </div>
                   )}
-                  {ambassador.phone && (
+                  {moodMentor.phone && (
                     <div className="flex items-center">
                       <PhoneIcon className="w-3.5 h-3.5 mr-1 text-gray-400" />
-                      <span>{ambassador.phone}</span>
+                      <span>{moodMentor.phone}</span>
                     </div>
                   )}
                 </div>
@@ -683,14 +683,14 @@ export default function AppointmentsPage() {
                     variant="outline" 
                     size="sm"
                     className="rounded-full flex-1 text-xs border-blue-200 text-blue-700 hover:bg-blue-50"
-                    onClick={() => handleViewAmbassadorProfile(ambassador.id)}
+                    onClick={() => handleViewMoodMentorProfile(moodMentor.id)}
                   >
                     View Profile
                   </Button>
                   <Button 
                     size="sm"
                     className="rounded-full flex-1 text-xs bg-blue-600 hover:bg-blue-700"
-                    onClick={() => handleBookWithAmbassador(ambassador.id)}
+                    onClick={() => handleBookWithMoodMentor(moodMentor.id)}
                   >
                     Book Appointment
                   </Button>
@@ -734,7 +734,7 @@ export default function AppointmentsPage() {
       }
     };
 
-    const setAmbassadorRole = async () => {
+    const setMoodMentorRole = async () => {
       try {
         devLog('Setting user role to Mood Mentor');
         
@@ -758,8 +758,8 @@ export default function AppointmentsPage() {
           <Button onClick={runDiagnostics} variant="outline" className="w-full">
             Run Diagnostics
           </Button>
-          <Button onClick={setAmbassadorRole} variant="outline" className="w-full">
-            Set as Ambassador
+          <Button onClick={setMoodMentorRole} variant="outline" className="w-full">
+            Set as Mood Mentor
           </Button>
         </div>
       </div>
@@ -816,7 +816,7 @@ export default function AppointmentsPage() {
               My Appointments
             </h1>
             <p className="text-slate-500 mt-1">
-              Manage your appointments with mental health ambassadors
+              Manage your appointments with mental health mood mentors
             </p>
           </div>
           <Button
@@ -923,16 +923,16 @@ export default function AppointmentsPage() {
           </div>
         </div>
 
-        {/* Main content - full width without ambassador sidebar */}
+        {/* Main content - full width without mood mentor sidebar */}
         <div className="w-full">
           {/* Appointments section */}
           <div className="mb-10">
             {renderAppointmentList()}
           </div>
           
-          {/* Ambassador profiles section */}
+          {/* Mood mentor profiles section */}
           <div>
-            {renderAmbassadorProfiles()}
+            {renderMoodMentorProfiles()}
           </div>
         </div>
       </div>

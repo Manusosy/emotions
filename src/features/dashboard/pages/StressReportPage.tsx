@@ -16,7 +16,8 @@ import {
   Sparkles,
   Clock,
   AlertTriangle,
-  CheckCircle
+  CheckCircle,
+  CloudOff
 } from "lucide-react";
 import { format } from "date-fns";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -28,6 +29,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { api } from "@/lib/api";
 import { fetchWithErrorHandling } from "@/utils/error-handling";
 import { errorLog, devLog } from "@/utils/environment";
+import syncService from "@/services/syncService";
+import { useConnection } from "@/contexts/ConnectionContext";
 
 // Define types for our data
 interface Assessment {
@@ -35,6 +38,7 @@ interface Assessment {
   user_id: string;
   stress_score: number;
   created_at: string;
+  is_local?: boolean;
 }
 
 interface MoodEntry {
@@ -54,6 +58,7 @@ export default function StressReportPage() {
   const { user } = useAuth();
   const [isLoading, setIsLoading] = useState(true);
   const [assessments, setAssessments] = useState<Assessment[]>([]);
+  const [localAssessments, setLocalAssessments] = useState<any[]>([]);
   const [moodEntries, setMoodEntries] = useState<MoodEntry[]>([]);
   const [stressMetrics, setStressMetrics] = useState({
     currentLevel: 0,
@@ -70,6 +75,7 @@ export default function StressReportPage() {
     trend: 'stable' as 'improving' | 'declining' | 'stable',
     consistencyPercentage: 0
   });
+  const { isConnected } = useConnection();
   
   useEffect(() => {
     const fetchData = async () => {
@@ -88,6 +94,29 @@ export default function StressReportPage() {
         
         if (assessmentsError) {
           errorLog('Error fetching stress assessments:', assessmentsError);
+        }
+        
+        // Also load local assessments
+        const offlineAssessments = syncService.getOfflineAssessments();
+        
+        // Map the local assessment structure to match the API structure
+        // This ensures they can be displayed with the same component
+        const formattedLocalAssessments = offlineAssessments.map(local => ({
+          id: local.id,
+          user_id: local.userId,
+          stress_score: local.score,
+          created_at: local.createdAt,
+          is_local: true // Add a flag to identify local assessments
+        }));
+        
+        setLocalAssessments(formattedLocalAssessments);
+        
+        // If we're online, use API data; if offline, use local data; if both, merge them
+        if (assessmentsData && assessmentsData.length > 0) {
+          setAssessments(assessmentsData);
+        } else if (!isConnected && formattedLocalAssessments.length > 0) {
+          // Only use local assessments if we're offline and have no server data
+          setAssessments(formattedLocalAssessments);
         }
         
         // Fetch mood entries for a more comprehensive view
@@ -250,7 +279,7 @@ export default function StressReportPage() {
     };
 
     fetchData();
-  }, [user]);
+  }, [user, isConnected]);
   
   // Helper function to convert stress score to health percentage
   const getHealthPercentage = (stress: number) => {
@@ -973,31 +1002,51 @@ export default function StressReportPage() {
             )}
           </TabsContent>
           
-          {/* Assessment History Tab */}
-          <TabsContent value="history" className="space-y-4">
+          {/* Assessment History Tab - Modified to show local assessments when offline */}
+          <TabsContent value="history">
             <Card>
               <CardHeader>
-                <CardTitle>Recent Assessments</CardTitle>
-                <CardDescription>Your most recent stress assessments</CardDescription>
+                <CardTitle>Assessment History</CardTitle>
+                <CardDescription>
+                  {isConnected ? 
+                    "Your complete stress assessment history" : 
+                    "You appear to be offline. Showing locally stored assessments."}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
                   <div className="flex justify-center py-8">
-                    <Spinner size="md" text="Loading assessments..." />
+                    <Spinner size="md" text="Loading assessment history..." />
                   </div>
-                ) : assessments.length === 0 ? (
-                  <div className="py-8 text-center text-slate-500">
-                    No stress assessments found. Complete your first assessment to see your results here.
+                ) : (assessments.length === 0 && localAssessments.length === 0) ? (
+                  <div className="text-center py-8">
+                    <div className="bg-slate-50 inline-flex items-center justify-center w-12 h-12 rounded-full mb-4">
+                      <Brain className="w-6 h-6 text-slate-400" />
+                    </div>
+                    <h3 className="text-lg font-medium mb-2">No Assessments Found</h3>
+                    <p className="text-slate-500 max-w-md mx-auto mb-6">
+                      You haven't completed any stress assessments yet. Regular assessments help track your emotional well-being.
+                    </p>
+                    <Button onClick={() => navigate('/patient-dashboard')}>
+                      Take Your First Assessment
+                    </Button>
                   </div>
                 ) : (
-                  <div className="space-y-4">
+                  <div className="space-y-3">
+                    {/* Display server assessments if connected */}
                     {assessments.map((assessment) => (
                       <Card key={assessment.id} className="bg-slate-50 border-0">
                         <CardContent className="p-4">
                           <div className="flex justify-between items-start">
                             <div>
-                              <div className="text-sm font-medium mb-1">
+                              <div className="text-sm font-medium mb-1 flex items-center">
                                 {format(new Date(assessment.created_at), "MMMM d, yyyy 'at' h:mm a")}
+                                {assessment.is_local && (
+                                  <Badge variant="outline" className="ml-2 bg-yellow-50 text-yellow-700 border-yellow-200">
+                                    <CloudOff className="w-3 h-3 mr-1" />
+                                    Local
+                                  </Badge>
+                                )}
                               </div>
                               <div className="text-2xl font-bold mb-2">
                                 {getHealthPercentage(assessment.stress_score)}% Emotional Health

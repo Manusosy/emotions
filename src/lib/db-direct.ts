@@ -40,23 +40,55 @@ export async function saveStressAssessment(assessmentData: CreateStressAssessmen
     console.log("Formatted data:", formattedData);
     
     try {
-      // Use Supabase directly - skip the API fallback since it causes 404 errors
-      const savedAssessment = await supabaseClient.saveStressAssessment(formattedData);
-      
-      if (!savedAssessment) {
-        throw new Error("No data returned from Supabase");
+      // Try using Supabase client directly first
+      try {
+        const savedAssessment = await supabaseClient.saveStressAssessment(formattedData);
+        
+        if (!savedAssessment) {
+          throw new Error("No data returned from Supabase");
+        }
+        
+        console.log("Assessment saved directly to Supabase:", savedAssessment);
+        return { success: true, data: savedAssessment };
+      } catch (supabaseError: any) {
+        console.error('Error in Supabase operation, trying API directly:', supabaseError);
+        
+        // If Supabase client fails, try the API directly
+        const response = await fetch('/api/stress-assessments', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache'
+          },
+          body: JSON.stringify(formattedData)
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`API error: ${response.status} - ${errorText}`);
+        }
+        
+        const result = await response.json();
+        
+        if (!result.success) {
+          throw new Error(result.message || 'Unknown error saving assessment');
+        }
+        
+        console.log("Assessment saved via API:", result);
+        return { success: true, data: result.assessment };
       }
-      
-      console.log("Assessment saved directly to Supabase:", savedAssessment);
-      return { success: true, data: savedAssessment };
-    } catch (supabaseError: any) {
-      console.error('Error in Supabase operation:', supabaseError);
-      throw new Error(supabaseError.message || "Database operation failed");
+    } catch (apiError: any) {
+      console.error('All save attempts failed:', apiError);
+      throw new Error(apiError.message || "Database operation failed");
     }
   } catch (error: any) {
     console.error('Error in direct database utility:', error);
     // Provide a more specific error message if available
-    throw new Error(error.message || "Unknown error");
+    return { 
+      success: false, 
+      error: error.message || "Unknown error",
+      timestamp: new Date().toISOString()
+    };
   }
 }
 
@@ -80,13 +112,15 @@ export async function saveMoodEntry(moodData: any): Promise<any> {
       throw new Error("Mood score is required");
     }
     
-    // Format the mood data properly
+    // Format the mood data properly to match database field names
     const formattedData = {
-      user_id: moodData.user_id,
+      patient_id: moodData.user_id, // Map user_id to patient_id
       mood_score: parseFloat(moodData.mood_score.toString()),
+      mood_description: moodData.mood_description || moodData.selectedEmotion || "",
       assessment_result: moodData.assessment_result || "",
+      factors: moodData.factors || [],
       notes: moodData.notes || "",
-      created_at: new Date().toISOString()
+      recorded_at: new Date().toISOString() // Use recorded_at instead of created_at
     };
 
     console.log("Formatted mood data:", formattedData);

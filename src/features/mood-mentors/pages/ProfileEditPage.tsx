@@ -20,6 +20,9 @@ import { z } from "zod";
 import { Save, X, Upload, PlusCircle, Trash2, User, BadgeCheck } from "lucide-react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import syncService from "@/services/syncService";
+import { useConnection } from '@/contexts/ConnectionContext';
+import { checkApiDirectly } from '@/utils/network';
 
 // Define profile form schema
 const profileFormSchema = z.object({
@@ -82,12 +85,14 @@ interface MoodMentorProfile {
 export default function ProfileEditPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { isConnected, isOffline } = useConnection();
   const [profile, setProfile] = useState<MoodMentorProfile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [activeTab, setActiveTab] = useState("basic-info");
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState<string>("");
+  const [apiStatus, setApiStatus] = useState<{apiConnected: boolean, databaseConnected: boolean}|null>(null);
   
   // Initialize form with default empty values
   const form = useForm<ProfileFormValues>({
@@ -232,42 +237,85 @@ export default function ProfileEditPage() {
     }
   };
   
+  // Check API connection before submitting
+  const checkApiStatus = async () => {
+    try {
+      const status = await checkApiDirectly();
+      setApiStatus(status);
+      return status;
+    } catch (error) {
+      console.error("API status check failed:", error);
+      return null;
+    }
+  };
+  
   // Function to handle form submission
   const onSubmit = async (data: ProfileFormValues) => {
     if (!user) {
-      toast.error("You must be logged in to save your profile");
+      toast.error("You must be logged in to update your profile");
       return;
     }
-
+    
     try {
       setIsSaving(true);
-
-      // Handle avatar upload if a new one was selected
-      let avatarUrl = profile?.avatar_url || '';
       
+      // Check API status directly before proceeding
+      const apiStatus = await checkApiStatus();
+      const canUseApi = apiStatus?.apiConnected && apiStatus?.databaseConnected;
+      const shouldSaveLocally = !canUseApi;
+      
+      // Show saving indicator in UI
+      toast.loading("Saving your profile...");
+      
+      // Upload avatar if there's a new one
+      let avatarUrl = profile?.avatar_url || '';
       if (avatarFile) {
-        try {
-          // Create a form data object for the avatar upload
-          const formData = new FormData();
-          formData.append('avatar', avatarFile);
-          formData.append('userId', user.id);
+        // Only attempt upload if we're online and API is working
+        if (canUseApi) {
+          const avatarUploadFormData = new FormData();
+          avatarUploadFormData.append('file', avatarFile);
+          avatarUploadFormData.append('userId', user.id);
           
-          // Upload avatar using moodMentorService instead of profileService
-          const uploadResult = await moodMentorService.uploadProfileImage(formData);
+          const uploadResult = await moodMentorService.uploadProfileImage(avatarUploadFormData);
           
-          if (uploadResult && uploadResult.data && uploadResult.data.url) {
+          if (!uploadResult.error && uploadResult.data) {
             avatarUrl = uploadResult.data.url;
           } else {
-            toast.error("Failed to upload profile image. Using previous image.");
+            console.error("Avatar upload failed:", uploadResult.error);
+            // Use local URL as fallback
+            const localUrl = URL.createObjectURL(avatarFile);
+            avatarUrl = localUrl;
           }
-        } catch (error) {
-          console.error("Error uploading avatar:", error);
-          toast.error("Failed to upload profile image. Your profile will be saved without the new image.");
+        } else {
+          // If offline or API not working, save to local storage and use local URL for now
+          const localUrl = URL.createObjectURL(avatarFile);
+          avatarUrl = localUrl;
+          // Store the file for later upload
+          localStorage.setItem('pendingAvatarUpload', JSON.stringify({
+            userId: user.id,
+            createdAt: new Date().toISOString()
+          }));
         }
       }
       
       // Calculate profile completion percentage
-      const completionPercentage = calculateProfileCompletion(data);
+      const requiredFields = ['full_name', 'email', 'bio', 'specialty'];
+      const additionalFields = ['phone_number', 'location', 'languages', 'education', 'experience', 'credentials'];
+      const completedRequired = requiredFields.filter(field => Boolean(data[field as keyof ProfileFormValues])).length;
+      const completedAdditional = additionalFields.filter(field => {
+        const value = data[field as keyof ProfileFormValues];
+        if (Array.isArray(value)) {
+          return value.length > 0 && value.some((item: any) => 
+            typeof item === 'object' ? Object.values(item).some(v => Boolean(v)) : Boolean(item)
+          );
+        }
+        return Boolean(value);
+      }).length;
+      
+      const completionPercentage = Math.round(
+        ((completedRequired / requiredFields.length) * 0.6 + 
+        (completedAdditional / additionalFields.length) * 0.4) * 100
+      );
       
       // Prepare the profile data updates
       const baseUpdates = {
@@ -291,68 +339,131 @@ export default function ProfileEditPage() {
       const complexUpdates = {
         specialties: data.specialties || [],
         languages: data.languages,
-        education: data.education || [],
-        experience: data.experience || [],
+        education: data.education?.map(edu => ({
+          university: edu.university || "",
+          degree: edu.degree || "",
+          period: edu.period || ""
+        })) || [],
+        experience: data.experience?.map(exp => ({
+          company: exp.company || "",
+          position: exp.position || "",
+          period: exp.period || "",
+          duration: exp.period || "" // Use period as duration to satisfy the type
+        })) || [],
         credentials: data.credentials,
       };
       
       // Combine all updates
       const updates = { ...baseUpdates, ...complexUpdates };
       
-      // Update the profile using our service
-      const updateResult = await moodMentorService.updateMentorProfile(user.id, updates);
-      
-      if (!updateResult.error) {
-        toast.success("Profile updated successfully!");
-        // After a brief delay, navigate back to the dashboard
-        setTimeout(() => {
-          navigate('/mood-mentor-dashboard');
-        }, 1500);
+      // Save the profile data based on connection status
+      if (canUseApi) {
+        // Update the profile using our service if we're online and API is working
+        const updateResult = await moodMentorService.updateMentorProfile(user.id, updates);
+        
+        if (!updateResult.error) {
+          toast.success("Profile updated successfully!");
+          // After a brief delay, navigate back to the dashboard
+          setTimeout(() => {
+            navigate('/mood-mentor-dashboard');
+          }, 1500);
+        } else {
+          console.error("Error updating profile:", updateResult.error);
+          // Save locally if API call fails
+          const savedLocally = saveProfileLocally(updates);
+          if (savedLocally) {
+            toast.info("Profile saved locally. It will sync when connection is restored.");
+          } else {
+            toast.error("Failed to update profile. Please try again.");
+          }
+        }
       } else {
-        console.error("Error updating profile:", updateResult.error);
-        toast.error("Failed to update profile. Please try again.");
+        // Save locally if API is not available
+        const savedLocally = saveProfileLocally(updates);
+        
+        if (savedLocally) {
+          toast.success("Profile saved locally. It will sync when connection is restored.");
+          // Still navigate away after a brief delay
+          setTimeout(() => {
+            navigate('/mood-mentor-dashboard');
+          }, 1500);
+        } else {
+          toast.error("Failed to save profile locally. Please check your browser storage.");
+        }
       }
     } catch (error) {
       console.error("Error saving profile:", error);
       toast.error("An error occurred while saving your profile");
+      
+      // Try to save locally on error
+      try {
+        const formValues = form.getValues();
+        
+        // Prepare data with required fields
+        const updates = {
+          ...formValues,
+          id: user.id,
+          updated_at: new Date().toISOString(),
+          education: formValues.education?.map(edu => ({
+            university: edu.university || "",
+            degree: edu.degree || "",
+            period: edu.period || "",
+            duration: edu.period || "" // Add duration field to match type
+          })) || [],
+          experience: formValues.experience?.map(exp => ({
+            company: exp.company || "",
+            position: exp.position || "",
+            period: exp.period || "",
+            duration: exp.period || "" // Add duration field to match type
+          })) || []
+        };
+        
+        const savedLocally = saveProfileLocally(updates);
+        
+        if (savedLocally) {
+          toast.info("Profile saved locally. It will sync when connection is restored.");
+        }
+      } catch (localSaveError) {
+        console.error("Failed to save locally:", localSaveError);
+      }
     } finally {
       setIsSaving(false);
+      toast.dismiss();
     }
   };
   
-  // Function to calculate profile completion percentage
-  const calculateProfileCompletion = (data: ProfileFormValues) => {
-    let completedSections = 0;
-    let totalSections = 7; // Total number of important profile sections
-    
-    // Personal info section
-    if (data.full_name && data.email && data.phone_number) completedSections++;
-    
-    // Bio & Specialties
-    if (data.bio && data.specialty) completedSections++;
-    
-    // Education & Experience
-    const hasValidEducation = Array.isArray(data.education) && data.education.some(
-      edu => edu.university && edu.degree && edu.period
-    );
-    
-    const hasValidExperience = Array.isArray(data.experience) && data.experience.some(
-      exp => exp.company && exp.position && exp.period
-    );
-    
-    if (hasValidEducation) completedSections++;
-    if (hasValidExperience) completedSections++;
-    
-    // Location and Languages
-    if (data.location && data.languages.length > 0) completedSections++;
-    
-    // Credentials
-    if (data.credentials) completedSections++;
-    
-    // Availability & Pricing
-    if (data.availability_status) completedSections++;
-    
-    return Math.round((completedSections / totalSections) * 100);
+  // Function to save profile data locally
+  const saveProfileLocally = (profileData: any): boolean => {
+    try {
+      // Get existing profiles or initialize empty array
+      const existingProfiles = JSON.parse(localStorage.getItem('offlineMentorProfiles') || '[]');
+      
+      // Check if this profile already exists locally
+      const existingIndex = existingProfiles.findIndex((p: any) => p.id === profileData.id);
+      
+      if (existingIndex >= 0) {
+        // Update existing profile
+        existingProfiles[existingIndex] = {
+          ...existingProfiles[existingIndex],
+          ...profileData,
+          updatedLocally: new Date().toISOString()
+        };
+      } else {
+        // Add new profile
+        existingProfiles.push({
+          ...profileData,
+          updatedLocally: new Date().toISOString()
+        });
+      }
+      
+      // Save back to localStorage
+      localStorage.setItem('offlineMentorProfiles', JSON.stringify(existingProfiles));
+      console.log("Profile saved to localStorage for later sync");
+      return true;
+    } catch (err) {
+      console.error("Error saving profile to localStorage:", err);
+      return false;
+    }
   };
   
   // Fetch profile on component mount

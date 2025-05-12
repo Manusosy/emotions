@@ -76,6 +76,7 @@ const DashboardMoodAssessment = () => {
   const [score, setScore] = useState(0);
   const [showResults, setShowResults] = useState(false);
   const [resultSaved, setResultSaved] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const navigate = useNavigate();
   const { user, isAuthenticated } = useAuth();
 
@@ -147,8 +148,9 @@ const DashboardMoodAssessment = () => {
   // Effect to save result when assessment is completed by logged-in user
   useEffect(() => {
     const saveMoodEntryToDatabase = async () => {
-      if (isAuthenticated && user && showResults && !resultSaved) {
+      if (isAuthenticated && user && showResults && !resultSaved && !isSaving) {
         try {
+          setIsSaving(true);
           devLog("Attempting to save mood entry...", { 
             userId: user.id, 
             emotion: selectedEmotion, 
@@ -158,69 +160,83 @@ const DashboardMoodAssessment = () => {
           const moodScore = getMoodScore(selectedEmotion, score);
           const moodResult = getMoodResult(selectedEmotion);
           
+          // Create mood entry data with all required fields
+          const moodEntryData = {
+            user_id: user.id, // Will be mapped to patient_id in the save functions
+            mood_score: moodScore,
+            mood_description: selectedEmotion || '',
+            assessment_result: moodResult,
+            factors: [],
+            notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
+          };
+          
           // Add retry logic for better resilience
           let retryCount = 0;
           let saveSuccessful = false;
+          const maxRetries = 3;
           
-          while (retryCount < 3 && !saveSuccessful) {
+          while (retryCount < maxRetries && !saveSuccessful) {
             try {
-              console.log("Attempt", retryCount + 1, "to save mood entry");
+              devLog(`Attempt ${retryCount + 1} to save mood entry`);
               
               // Try using the direct database utility first
-              const result = await saveMoodEntry({
-                user_id: user.id,
-                mood_score: moodScore,
-                assessment_result: moodResult,
-                notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-              });
+              const result = await saveMoodEntry(moodEntryData);
               
-              if (result && result.success) {
-                devLog("Mood entry saved successfully using direct method:", result);
+              if (result && (result.success || result.id)) {
+                devLog("Mood entry saved successfully:", result);
                 saveSuccessful = true;
+                toast.success("Mood assessment saved!", {
+                  position: "bottom-right",
+                  duration: 3000
+                });
               } else {
-                throw new Error("Failed to save mood entry using direct method");
+                throw new Error("Failed to save mood entry: No result returned");
               }
             } catch (directError) {
-              console.error("Direct save error:", directError);
+              errorLog(`Error saving mood entry (attempt ${retryCount + 1}):`, directError);
               
-              // If direct save fails, try the API as fallback
-              try {
-                devLog("Attempting to save mood entry via API fallback...");
-                const response = await api.post("/api/mood-entries", {
-                  user_id: user.id,
-                  mood_score: moodScore,
-                  assessment_result: moodResult,
-                  notes: `Assessment score: ${score}, Selected emotion: ${selectedEmotion}`
-                });
+              // Increase retry count and wait before next attempt
+              retryCount++;
+              
+              if (retryCount < maxRetries) {
+                // Wait longer with each retry
+                await new Promise(resolve => setTimeout(resolve, retryCount * 1000));
                 
-                if (!response.ok) {
-                  throw new Error(`Failed to save mood entry: ${response.statusText}`);
+                // Try a simpler data structure on subsequent attempts
+                if (retryCount === 2) {
+                  // On the last attempt, use only the essential fields
+                  moodEntryData.factors = undefined;
+                  delete moodEntryData.factors;
+                  devLog("Trying with simplified data structure:", moodEntryData);
                 }
-                
-                const data = await response.json();
-                devLog("Mood entry saved successfully via API:", data);
-                saveSuccessful = true;
-              } catch (apiError) {
-                retryCount++;
-                errorLog(`Error saving mood entry (attempt ${retryCount}):`, apiError);
-                if (retryCount >= 3) throw apiError;
-                // Wait before retry
-                await new Promise(resolve => setTimeout(resolve, 1000));
+              } else {
+                // All retries failed, show error to user
+                toast.error("Failed to save assessment. Please try again later.", {
+                  position: "bottom-right",
+                  duration: 5000
+                });
               }
             }
           }
           
+          // Mark as saved even if it failed, to prevent endless retries
           setResultSaved(true);
-          toast.success("Mood assessment saved");
         } catch (error) {
-          errorLog("Error saving mood entry:", error);
-          toast.error("Failed to save assessment. Please try again.");
+          errorLog("Error in saveMoodEntryToDatabase:", error);
+          toast.error("Failed to save assessment", {
+            position: "bottom-right",
+            duration: 3000
+          });
+          // Mark as saved to prevent endless retries
+          setResultSaved(true);
+        } finally {
+          setIsSaving(false);
         }
       }
     };
 
     saveMoodEntryToDatabase();
-  }, [showResults, isAuthenticated, user, selectedEmotion, score, resultSaved]);
+  }, [showResults, isAuthenticated, user, selectedEmotion, score, resultSaved, isSaving]);
 
   const handleEmotionSelect = (emotion: string) => {
     setSelectedEmotion(emotion);
@@ -256,15 +272,15 @@ const DashboardMoodAssessment = () => {
   };
 
   const navigateToResources = () => {
-    navigate('/resources');
+    navigate('/patient-dashboard/resources');
   };
 
-  const navigateToAmbassadors = () => {
-    navigate('/patient-dashboard/mood-mentors');
+  const navigateToMoodMentors = () => {
+    navigate('/mood-mentors');
   };
 
   const navigateToHelpGroups = () => {
-    navigate('/community');
+    navigate('/help-groups');
   };
 
   return (
@@ -397,18 +413,17 @@ const DashboardMoodAssessment = () => {
                           <div className="bg-[#20C0F3]/10 p-2 rounded-full mr-2">
                             <Users className="h-4 w-4 text-[#20C0F3]" />
                           </div>
-                          <h3 className="font-medium text-gray-800 text-sm">Talk to an Ambassador</h3>
+                          <h3 className="font-medium text-gray-800 text-sm">Talk to a Mood Mentor</h3>
                         </div>
                         <p className="text-gray-600 text-xs mb-3">
-                          Connect with a trusted mental health ambassador for support.
+                          Connect with a trusted mental health professional for support.
                         </p>
                         <Button 
-                          onClick={navigateToAmbassadors} 
+                          onClick={navigateToMoodMentors} 
                           className="w-full bg-gradient-to-r from-[#0078FF] to-[#20C0F3] hover:from-[#0062CC] hover:to-[#1AB6E8] text-white shadow-sm hover:shadow transition-all"
                           size="sm"
                         >
-                          Find an Ambassador
-                          <ArrowRight className="ml-1 h-3 w-3" />
+                          Find a Mood Mentor
                         </Button>
                       </div>
                       
