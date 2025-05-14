@@ -83,3 +83,6 @@ next-env.d.ts
 
 # Exclude temp-repo directory
 temp-repo/
+
+# Development tools (local only)
+src/components/DiagnosticTool.tsx

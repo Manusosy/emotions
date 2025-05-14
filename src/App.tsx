@@ -214,6 +214,10 @@ const AppContent = () => {
       <TooltipProvider>
         <Toaster />
         <Sonner />
+        
+        {/* Always show DiagnosticTool for easy access to fix connection issues */}
+        <DiagnosticTool />
+        
         <div className="flex flex-col min-h-screen max-w-[100vw] overflow-x-hidden">
           {showHeaderFooter && <Navbar />}
           <div className="flex-grow">
@@ -429,11 +433,26 @@ const App = () => {
   useEffect(() => {
     const initialize = async () => {
       try {
-        // Initialize the database tables
+        // Initialize the database tables - wrap in try/catch and add timeout
         console.log("Initializing application...");
-        await setupDatabase();
         
-        // Mark initialization as complete
+        // Add a timeout to prevent hanging on initialization
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('Initialization timeout')), 5000);
+        });
+        
+        // Race the initialization with the timeout
+        try {
+          await Promise.race([
+            setupDatabase(),
+            timeoutPromise
+          ]);
+        } catch (dbError) {
+          console.warn("Database initialization error or timeout:", dbError);
+          // Continue anyway - don't block app startup for DB issues
+        }
+        
+        // Mark initialization as complete even if database setup failed
         setIsMounting(false);
       } catch (error) {
         console.error("Error during initialization:", error);
@@ -443,6 +462,16 @@ const App = () => {
     };
 
     initialize();
+    
+    // Set a backup timeout in case initialization hangs
+    const backupTimeout = setTimeout(() => {
+      if (isMounting) {
+        console.warn("Initialization timeout reached, forcing app to start anyway");
+        setIsMounting(false);
+      }
+    }, 7000);
+    
+    return () => clearTimeout(backupTimeout);
   }, []);
 
   // Show a loading screen until initialization is complete
@@ -479,7 +508,6 @@ const App = () => {
         <AppContent />
       </BrowserRouter>
       <Toaster />
-      <DiagnosticTool />
     </ErrorBoundary>
   );
 };

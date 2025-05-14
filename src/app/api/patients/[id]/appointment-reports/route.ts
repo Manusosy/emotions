@@ -1,5 +1,11 @@
 import { NextResponse } from 'next/server';
-import { subDays, addDays, format } from 'date-fns';
+import { format } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * GET /api/patients/[id]/appointment-reports
@@ -12,81 +18,86 @@ export async function GET(
   const id = params.id;
   
   try {
-    const today = new Date();
+    // Get patient profile ID from user ID
+    const { data: patientProfile, error: profileError } = await supabase
+      .from('patient_profiles')
+      .select('id')
+      .eq('user_id', id)
+      .single();
     
-    // Mock appointment reports
-    const reports = [
-      {
-        id: 'RPT-2023-001',
-        date: format(subDays(today, 7), 'yyyy-MM-dd'),
-        time: '10:00 AM',
-        type: 'Initial Assessment',
-        status: 'completed',
+    if (profileError) {
+      console.error('Error finding patient profile:', profileError);
+      return new NextResponse('Patient profile not found', { status: 404 });
+    }
+    
+    // Get appointments with session notes for this patient
+    const { data: appointments, error: appointmentsError } = await supabase
+      .from('appointments')
+      .select(`
+        id,
+        start_time,
+        end_time,
+        status,
+        notes,
+        created_at,
+        mentor_profiles:mood_mentor_profiles(
+          id,
+          users:user_id(
+            full_name,
+            avatar_url
+          ),
+          specialties
+        ),
+        session_notes(
+          id,
+          content,
+          action_items,
+          mood_progress,
+          created_at
+        )
+      `)
+      .eq('patient_id', patientProfile.id)
+      .order('start_time', { ascending: false });
+    
+    if (appointmentsError) {
+      console.error('Error fetching appointment reports:', appointmentsError);
+      return new NextResponse('Failed to fetch appointment reports', { status: 500 });
+    }
+    
+    // Format the reports
+    const reports = appointments.map(apt => {
+      // Extract mentor information
+      const mentor = apt.mentor_profiles || {};
+      const mentorUser = mentor.users && mentor.users.length > 0 ? mentor.users[0] : {};
+      const specialization = mentor.specialties && mentor.specialties.length > 0 
+        ? mentor.specialties[0] 
+        : 'Mood Mentor';
+      
+      // Extract session note information
+      const sessionNote = apt.session_notes && apt.session_notes.length > 0 
+        ? apt.session_notes[0] 
+        : null;
+      
+      // Format date and time
+      const appointmentDate = new Date(apt.start_time);
+      
+      return {
+        id: apt.id,
+        date: format(appointmentDate, 'yyyy-MM-dd'),
+        time: format(appointmentDate, 'h:mm a'),
+        type: sessionNote ? 'Follow-up Session' : 'Initial Assessment',
+        status: apt.status,
         ambassador: {
-          name: 'Dr. Emily Chen',
-          specialization: 'Clinical Psychologist',
-          avatar_url: null
+          name: mentorUser.full_name || 'Unknown Mentor',
+          specialization: specialization,
+          avatar_url: mentorUser.avatar_url || null
         },
-        summary: 'Initial assessment for stress and anxiety symptoms. Patient reports work-related stress and difficulty sleeping.',
-        recommendations: 'Recommended regular check-ins, stress management techniques, and sleep hygiene practices.'
-      },
-      {
-        id: 'RPT-2023-002',
-        date: format(subDays(today, 3), 'yyyy-MM-dd'),
-        time: '2:30 PM',
-        type: 'Follow-up Session',
-        status: 'completed',
-        ambassador: {
-          name: 'Dr. Michael Rodriguez',
-          specialization: 'Psychiatrist',
-          avatar_url: null
-        },
-        summary: 'Patient reports improvement in sleep patterns after implementing suggested sleep hygiene practices.',
-        recommendations: 'Continue with current practices and add daily mindfulness exercises.'
-      },
-      {
-        id: 'RPT-2023-003',
-        date: format(today, 'yyyy-MM-dd'),
-        time: '11:15 AM',
-        type: 'Wellness Check',
-        status: 'completed',
-        ambassador: {
-          name: 'Sarah Johnson',
-          specialization: 'Wellness Coach',
-          avatar_url: null
-        },
-        summary: 'Reviewed progress with stress management techniques. Patient showing good engagement with recommended practices.',
-        recommendations: 'Incorporating physical activity into daily routine to help manage stress levels.'
-      },
-      {
-        id: 'RPT-2023-004',
-        date: format(addDays(today, 4), 'yyyy-MM-dd'),
-        time: '3:45 PM',
-        type: 'Group Session',
-        status: 'upcoming',
-        ambassador: {
-          name: 'Dr. James Wilson',
-          specialization: 'Group Therapist',
-          avatar_url: null
-        },
-        summary: 'Scheduled for stress management group session.',
-        recommendations: 'N/A'
-      },
-      {
-        id: 'RPT-2023-005',
-        date: format(addDays(today, 10), 'yyyy-MM-dd'),
-        time: '1:00 PM',
-        type: 'Progress Review',
-        status: 'upcoming',
-        ambassador: {
-          name: 'Dr. Emily Chen',
-          specialization: 'Clinical Psychologist',
-          avatar_url: null
-        },
-        summary: 'Scheduled for monthly progress review.',
-        recommendations: 'N/A'
-      }
-    ];
+        summary: sessionNote ? sessionNote.content : (apt.notes || 'No summary available'),
+        recommendations: sessionNote && sessionNote.action_items ? 
+          sessionNote.action_items.join('. ') : 
+          'No specific recommendations recorded'
+      };
+    });
     
     return NextResponse.json(reports);
   } catch (error) {

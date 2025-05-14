@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server';
-import { subDays, format } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
+
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * GET /api/patients/[id]/journal-entries
@@ -12,40 +17,55 @@ export async function GET(
   const id = params.id;
   
   try {
-    const now = new Date();
+    // Get patient profile ID from user ID
+    const { data: patientProfile, error: profileError } = await supabase
+      .from('patient_profiles')
+      .select('id')
+      .eq('user_id', id)
+      .single();
     
-    // Mock journal entries data
-    const journalEntries = [
-      {
-        id: `journal_${id}_1`,
-        user_id: id,
-        title: 'Feeling More Balanced Today',
-        content: '<p>I practiced the breathing techniques we discussed in my last session, and I\'m noticing a difference in how I respond to stress at work. When my boss added another project to my workload, I took a moment to breathe instead of immediately feeling overwhelmed.</p><p>I still have concerns about the deadline, but I feel more capable of handling it step by step.</p>',
-        mood: 'Calm',
-        created_at: format(subDays(now, 1), "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-        updated_at: format(subDays(now, 1), "yyyy-MM-dd'T'HH:mm:ss'Z'")
-      },
-      {
-        id: `journal_${id}_2`,
-        user_id: id,
-        title: 'Gratitude Reflection',
-        content: '<p>Today I\'m focusing on things I\'m grateful for:</p><ul><li>My supportive partner who made me tea this morning</li><li>The sunny weather after days of rain</li><li>Making progress on my project at work</li><li>The helpful session with my therapist yesterday</li></ul><p>I notice that when I list these things out, my mood lifts a bit.</p>',
-        mood: 'Grateful',
-        created_at: format(subDays(now, 3), "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-        updated_at: format(subDays(now, 3), "yyyy-MM-dd'T'HH:mm:ss'Z'")
-      },
-      {
-        id: `journal_${id}_3`,
-        user_id: id,
-        title: 'Difficult Day',
-        content: '<p>I had trouble sleeping last night, which made today challenging. My anxiety was higher than usual, especially during the team meeting. I found myself catastrophizing about the project timeline.</p><p>I need to remember to use the grounding techniques when I notice my thoughts spiraling. Going to try to get better sleep tonight by avoiding screens before bed.</p>',
-        mood: 'Anxious',
-        created_at: format(subDays(now, 6), "yyyy-MM-dd'T'HH:mm:ss'Z'"),
-        updated_at: format(subDays(now, 6), "yyyy-MM-dd'T'HH:mm:ss'Z'")
+    if (profileError) {
+      console.error('Error finding patient profile:', profileError);
+      return new NextResponse('Patient profile not found', { status: 404 });
+    }
+    
+    // Get the journal entries for this patient
+    const { data: journalEntries, error: entriesError } = await supabase
+      .from('journal_entries')
+      .select('id, title, content, mood_rating, tags, created_at, updated_at')
+      .eq('patient_id', patientProfile.id)
+      .order('created_at', { ascending: false });
+    
+    if (entriesError) {
+      console.error('Error fetching journal entries:', entriesError);
+      return new NextResponse('Failed to fetch journal entries', { status: 500 });
+    }
+    
+    // Format the journal entries
+    const formattedEntries = journalEntries.map(entry => {
+      // Map mood rating to a descriptive mood
+      let mood = 'Neutral';
+      if (entry.mood_rating) {
+        if (entry.mood_rating >= 8) mood = 'Happy';
+        else if (entry.mood_rating >= 6) mood = 'Content';
+        else if (entry.mood_rating >= 4) mood = 'Neutral';
+        else if (entry.mood_rating >= 2) mood = 'Sad';
+        else mood = 'Depressed';
       }
-    ];
+      
+      return {
+        id: entry.id,
+        user_id: id,
+        title: entry.title,
+        content: entry.content,
+        mood: mood,
+        tags: entry.tags || [],
+        created_at: entry.created_at,
+        updated_at: entry.updated_at
+      };
+    });
     
-    return NextResponse.json(journalEntries);
+    return NextResponse.json(formattedEntries);
   } catch (error) {
     console.error('Error fetching journal entries:', error);
     return new NextResponse('Internal Server Error', { status: 500 });

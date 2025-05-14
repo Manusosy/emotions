@@ -10,6 +10,8 @@ export type AuthSignUpData = {
   role: UserRole;
   country: string;
   gender?: string | null;
+  specialty?: string | null;
+  specialties?: string[] | null;
 };
 
 class AuthService {
@@ -22,7 +24,9 @@ class AuthService {
       firstName: data.firstName,
       lastName: data.lastName,
       role: data.role,
-      country: data.country
+      country: data.country,
+      specialty: data.specialty,
+      specialties: data.specialties
     });
 
     try {
@@ -41,6 +45,8 @@ class AuthService {
             role: data.role,
             country: data.country,
             gender: data.gender || null,
+            specialty: data.specialty || null,
+            specialties: data.specialties || [],
             current_session: {
               device_type: deviceInfo.deviceType,
               browser: deviceInfo.browser,

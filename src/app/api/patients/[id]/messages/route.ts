@@ -1,49 +1,11 @@
 import { NextResponse } from 'next/server';
-import { subHours, subDays, format } from 'date-fns';
+import { createClient } from '@supabase/supabase-js';
+import { format } from 'date-fns';
 
-// Generate mock messages with realistic timestamps
-const generateMockMessages = (patientId: string) => {
-  const now = new Date();
-  const messages = [];
-  
-  // Message from today
-  messages.push({
-    id: `msg_${patientId}_1`,
-    user_id: patientId,
-    sender_id: 'amb_12345',
-    sender_type: 'ambassador',
-    sender_name: 'Dr. Emily Chen',
-    content: 'Hi there! Just checking in before our appointment tomorrow. Please let me know if you have any questions.',
-    read: true,
-    created_at: format(subHours(now, 2), "yyyy-MM-dd'T'HH:mm:ss'Z'")
-  });
-  
-  // Reply from patient
-  messages.push({
-    id: `msg_${patientId}_2`,
-    user_id: patientId,
-    sender_id: patientId,
-    sender_type: 'patient',
-    sender_name: 'You',
-    content: 'Thanks for checking in! I\'m looking forward to our session. I\'ll make sure to prepare my questions.',
-    read: true,
-    created_at: format(subHours(now, 1), "yyyy-MM-dd'T'HH:mm:ss'Z'")
-  });
-  
-  // Message from yesterday
-  messages.push({
-    id: `msg_${patientId}_3`,
-    user_id: patientId,
-    sender_id: 'amb_54321',
-    sender_type: 'ambassador',
-    sender_name: 'Dr. Michael Rodriguez',
-    content: 'I\'ve reviewed your progress from our last session. You\'re doing great with the breathing exercises!',
-    read: true,
-    created_at: format(subDays(now, 1), "yyyy-MM-dd'T'HH:mm:ss'Z'")
-  });
-  
-  return messages;
-};
+// Initialize Supabase client
+const supabaseUrl = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 /**
  * GET /api/patients/[id]/messages
@@ -56,10 +18,50 @@ export async function GET(
   const id = params.id;
   
   try {
-    // Generate mock messages for this patient
-    const messages = generateMockMessages(id);
+    // Fetch messages either sent by or received by this user
+    const { data: messagesData, error: messagesError } = await supabase
+      .from('messages')
+      .select(`
+        id,
+        sender_id,
+        recipient_id,
+        content,
+        is_read,
+        created_at,
+        users!sender_id(id, full_name, role, avatar_url),
+        users!recipient_id(id, full_name, role, avatar_url)
+      `)
+      .or(`sender_id.eq.${id},recipient_id.eq.${id}`)
+      .order('created_at', { ascending: false })
+      .limit(50);
     
-    return NextResponse.json(messages);
+    if (messagesError) {
+      console.error('Error fetching messages:', messagesError);
+      return new NextResponse('Failed to fetch messages', { status: 500 });
+    }
+    
+    // Format messages for client consumption
+    const formattedMessages = messagesData.map(message => {
+      const isOutgoing = message.sender_id === id;
+      const senderUser = message.users?.find((u: any) => u.id === message.sender_id);
+      const recipientUser = message.users?.find((u: any) => u.id === message.recipient_id);
+      const otherUser = isOutgoing ? recipientUser : senderUser;
+      
+      return {
+        id: message.id,
+        user_id: id,
+        sender_id: message.sender_id,
+        sender_type: senderUser?.role || 'unknown',
+        sender_name: isOutgoing ? 'You' : (senderUser?.full_name || 'Unknown User'),
+        recipient_name: !isOutgoing ? 'You' : (recipientUser?.full_name || 'Unknown User'),
+        content: message.content,
+        read: message.is_read,
+        created_at: message.created_at,
+        avatar_url: otherUser?.avatar_url || null
+      };
+    });
+    
+    return NextResponse.json(formattedMessages);
   } catch (error) {
     console.error('Error fetching patient messages:', error);
     return new NextResponse('Internal Server Error', { status: 500 });

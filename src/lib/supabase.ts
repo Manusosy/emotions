@@ -52,64 +52,89 @@ if (!isValidSupabaseKey(supabaseKey)) {
 // Log connection details (excluding sensitive keys)
 console.log(`Initializing Supabase client with URL: ${supabaseUrl}`);
 
-// Create a single supabase client for the entire app with improved error handling
-export const supabase = createClient(supabaseUrl, supabaseKey, {
-  auth: {
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: true
-  },
-  // Add more resilient fetch configuration
-  global: {
-    headers: {
-      'Content-Type': 'application/json',
-      'Cache-Control': 'no-cache',
-      'X-Client-Info': 'supabase-js/2.x',
-    },
-    fetch: (url, options) => {
-      // Debug request
-      console.log(`Supabase request to: ${typeof url === 'string' ? url.split('?')[0] : 'fetch request'}`);
-      
-      // Add timeout to prevent hanging requests
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => {
-        controller.abort();
-        console.error('Supabase request timed out after 15 seconds');
-      }, 15000);
-      
-      // Merge the abort signal with existing options
-      const mergedOptions = {
-        ...options,
-        signal: controller.signal,
+// Create a function to initialize the Supabase client with robust error handling
+function createSupabaseClient() {
+  try {
+    // Create a single supabase client with improved error handling
+    const client = createClient(supabaseUrl, supabaseKey, {
+      auth: {
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: true
+      },
+      // Add more resilient fetch configuration
+      global: {
         headers: {
-          ...options?.headers,
+          'Content-Type': 'application/json',
           'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      };
-      
-      // Make the request with error handling
-      return fetch(url, mergedOptions)
-        .then(response => {
-          clearTimeout(timeoutId);
+          'X-Client-Info': 'supabase-js/2.x',
+        },
+        fetch: (url, options) => {
+          // Debug request
+          console.log(`Supabase request to: ${typeof url === 'string' ? url.split('?')[0] : 'fetch request'}`);
           
-          // Check for HTML responses, which indicate an error
-          const contentType = response.headers.get('content-type');
-          if (contentType && contentType.includes('text/html')) {
-            console.error('Supabase returned HTML instead of JSON - likely an error');
-            throw new Error('Received HTML response instead of JSON from Supabase');
-          }
+          // Add timeout to prevent hanging requests
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            controller.abort();
+            console.error('Supabase request timed out after 15 seconds');
+          }, 15000);
           
-          return response;
-        })
-        .catch(err => {
-          clearTimeout(timeoutId);
-          console.error("Supabase fetch error:", err.message);
-          throw err;
-        });
-    },
-  },
-});
+          // Merge the abort signal with existing options
+          const mergedOptions = {
+            ...options,
+            signal: controller.signal,
+            headers: {
+              ...options?.headers,
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache'
+            }
+          };
+          
+          // Make the request with error handling
+          return fetch(url, mergedOptions)
+            .then(response => {
+              clearTimeout(timeoutId);
+              
+              // Check for HTML responses, which indicate an error
+              const contentType = response.headers.get('content-type');
+              if (contentType && contentType.includes('text/html')) {
+                console.error('Supabase returned HTML instead of JSON - likely an error');
+                throw new Error('Received HTML response instead of JSON from Supabase');
+              }
+              
+              return response;
+            })
+            .catch(err => {
+              clearTimeout(timeoutId);
+              console.error("Supabase fetch error:", err.message);
+              throw err;
+            });
+        },
+      },
+    });
+    
+    return client;
+  } catch (error) {
+    console.error("Error creating Supabase client:", error);
+    // Create a minimal fallback client for recovery
+    return createClient(supabaseUrl, supabaseKey);
+  }
+}
+
+// Create the Supabase client
+export const supabase = createSupabaseClient();
+
+// Refresh function to create a new client instance when needed
+export function refreshSupabaseClient() {
+  try {
+    console.log("Refreshing Supabase client connection...");
+    return createSupabaseClient();
+  } catch (error) {
+    console.error("Error refreshing Supabase client:", error);
+    return supabase; // Return the original client if refresh fails
+  }
+}
 
 /**
  * Track connection status listeners
@@ -117,6 +142,8 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
 const connectionStatusListeners: ((isConnected: boolean) => void)[] = [];
 let lastConnectionStatus = false;
 let connectionCheckInProgress = false;
+let retryCount = 0;
+const MAX_RETRIES = 3;
 
 // Add a listener for connection status changes
 export function onConnectionStatusChange(callback: (isConnected: boolean) => void) {
@@ -137,38 +164,66 @@ export async function checkConnection(): Promise<boolean> {
   
   connectionCheckInProgress = true;
   try {
-    // First try a lightweight fetch to check if the Supabase API is accessible at all
+    // First check network connectivity
+    let networkAccessible = false;
     try {
       const networkCheck = await fetch(supabaseUrl, {
         method: 'HEAD',
-        mode: 'no-cors', // Avoid CORS preflight
-        cache: 'no-store', // Don't use cache
+        mode: 'no-cors',
+        cache: 'no-store',
         headers: { 'Cache-Control': 'no-cache' },
-        signal: AbortSignal.timeout(3000) // Timeout after 3 seconds
-      }).catch(err => {
-        console.log("Network check failed:", err.message);
-        return { ok: false };
+        signal: AbortSignal.timeout(5000) // Increased timeout for better reliability
       });
       
-      if (!networkCheck.ok) {
-        console.warn("Network connectivity issue detected");
-        
-        // Update connection status to false if it was previously true
-        if (lastConnectionStatus) {
-          lastConnectionStatus = false;
-          connectionStatusListeners.forEach(listener => listener(false));
-        }
-        
-        return false;
-      }
+      networkAccessible = true;
     } catch (netError) {
-      console.error("Network check error:", netError);
-      // Proceed to auth check anyway as a fallback
+      console.warn("Network check error:", netError);
+      // We'll still try the auth check as a fallback
     }
     
-    // Now check auth session (more reliable method to verify connection)
-    const { data, error } = await supabase.auth.getSession();
-    const isConnected = !error;
+    if (!networkAccessible && retryCount < MAX_RETRIES) {
+      // Network issue might be temporary, retry after a delay
+      retryCount++;
+      console.log(`Network connectivity issue, retry ${retryCount}/${MAX_RETRIES} in 1 second...`);
+      
+      connectionCheckInProgress = false;
+      
+      // Wait 1 second before retry
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      return checkConnection();
+    }
+    
+    // Reset retry count if we got here
+    retryCount = 0;
+    
+    // Try multiple checks to verify database connection
+    let isConnected = false;
+    
+    try {
+      // First try auth session - most reliable method
+      const { data: authData, error: authError } = await supabase.auth.getSession();
+      if (!authError) {
+        console.log("Connection verified via auth service");
+        isConnected = true;
+      } else {
+        // If auth check fails, try a simple database query
+        console.log("Auth check failed, trying database query:", authError.message);
+        const { data: dbData, error: dbError } = await supabase
+          .from('user_profiles')
+          .select('id')
+          .limit(1);
+          
+        if (!dbError) {
+          console.log("Connection verified via database query");
+          isConnected = true;
+        } else {
+          console.error("Database query failed:", dbError.message);
+        }
+      }
+    } catch (checkError) {
+      console.error("Connection check error:", checkError);
+      isConnected = false;
+    }
     
     // Only notify on status change
     if (isConnected !== lastConnectionStatus) {
@@ -193,9 +248,29 @@ export async function checkConnection(): Promise<boolean> {
   }
 }
 
-// Test the connection on initialization
+// Test the connection on initialization and set up periodic checks
 checkConnection().then(isConnected => {
   console.log(`Initial Supabase connection check: ${isConnected ? "Connected" : "Disconnected"}`);
+  
+  // Set up periodic connection checking if in browser environment
+  if (typeof window !== 'undefined') {
+    // Check connection every 30 seconds
+    setInterval(checkConnection, 30000);
+    
+    // Also check connection when tab becomes visible again
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('Tab became visible again, checking connection...');
+        checkConnection();
+      }
+    });
+    
+    // Check when network status changes
+    window.addEventListener('online', () => {
+      console.log('Browser reported online status, checking connection...');
+      checkConnection();
+    });
+  }
 }).catch(err => {
   console.error("Initial Supabase connection check failed:", err.message);
 });

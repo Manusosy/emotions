@@ -52,7 +52,7 @@ type Resource = {
   externalUrl?: string;
   url?: string;
   file_url?: string;
-  ambassador_id?: string;
+  mentor_id?: string;
   shares?: number;
   downloads?: number;
   created_at?: string;
@@ -63,11 +63,12 @@ const convertDbResourceToUi = (dbResource: any): Resource => {
   console.log("Converting resource:", dbResource);
 
   // Default images based on resource type
-  const typeImages = {
+  const typeImages: Record<string, string> = {
     document: "https://images.unsplash.com/photo-1551847677-dc82d764e1eb?q=80&w=500&auto=format&fit=crop",
     video: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=500&auto=format&fit=crop",
     image: "https://images.unsplash.com/photo-1599420186946-7b6fb4e297f0?q=80&w=500&auto=format&fit=crop",
-    link: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=500&auto=format&fit=crop"
+    link: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=500&auto=format&fit=crop",
+    article: "https://images.unsplash.com/photo-1499209974431-9dddcece7f88?q=80&w=500&auto=format&fit=crop"
   };
 
   // Extract categories from the single category string
@@ -99,8 +100,20 @@ const convertDbResourceToUi = (dbResource: any): Resource => {
     case "link":
       uiType = "link";
       break;
-    default:
+    case "article":
       uiType = "article";
+      break;
+    case "audio":
+      uiType = "audio";
+      break;
+    case "workbook":
+      uiType = "workbook";
+      break;
+    case "tool":
+      uiType = "tool";
+      break;
+    default:
+      uiType = "document";
   }
 
   // Create a new Date object to calculate if resource is "new" (less than 7 days old)
@@ -111,30 +124,43 @@ const convertDbResourceToUi = (dbResource: any): Resource => {
   // Is popular if it has more than 50 downloads or shares
   const isPopular = (dbResource.downloads || 0) + (dbResource.shares || 0) > 50;
 
+  // Get appropriate image based on resource type or use a default
+  const resourceImage = dbResource.image_url || typeImages[uiType] || typeImages.document;
+
+  // Format the author information
+  const authorInfo = dbResource.author_name ? {
+    name: dbResource.author_name || "Mood Mentor",
+    role: dbResource.author_role || "Mental Health Professional",
+    avatar: dbResource.author_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(dbResource.author_name)}&background=random`
+  } : undefined;
+
   // Use the actual resource type for proper rendering
   return {
     id: dbResource.id,
     title: dbResource.title,
-    description: dbResource.description,
+    description: dbResource.description || "No description provided",
     type: uiType,
     category: categoryMapping[dbResource.category] || ["educational"],
-    image: typeImages[dbResource.type as keyof typeof typeImages] || typeImages.document,
-    featured: isPopular || false, // Make sure featured resources appear in the featured section
+    image: resourceImage,
+    featured: dbResource.featured || isPopular || false,
     new: isNew,
     popular: isPopular,
+    author: authorInfo,
     downloadUrl: dbResource.file_url,
     externalUrl: dbResource.url,
     url: dbResource.url,
     file_url: dbResource.file_url,
-    ambassador_id: dbResource.ambassador_id,
+    mentor_id: dbResource.mentor_id,
     shares: dbResource.shares || 0,
     downloads: dbResource.downloads || 0,
     created_at: dbResource.created_at,
     // For display purposes
-    tags: [dbResource.category, dbResource.type],
-    duration: dbResource.type === "document" ? "PDF Document" : 
-              dbResource.type === "video" ? "Video Resource" : 
-              dbResource.type === "image" ? "Image Resource" : "External Link"
+    tags: [dbResource.category, uiType].filter(Boolean),
+    duration: dbResource.duration || 
+              (uiType === "document" ? "PDF Document" : 
+              uiType === "video" ? "Video Resource" : 
+              uiType === "image" ? "Image Resource" : 
+              uiType === "audio" ? "Audio Resource" : "External Link")
   };
 };
 
@@ -145,16 +171,17 @@ const Resources = () => {
   const [dbResources, setDbResources] = useState<Resource[]>([])
   const [isLoading, setIsLoading] = useState(false)
   
-  // Fetch ambassador-uploaded resources from Supabase
+  // Fetch mood mentor-uploaded resources from Supabase
   useEffect(() => {
-    const fetchAmbassadorResources = async () => {
+    const fetchMoodMentorResources = async () => {
       setIsLoading(true);
       try {
-        console.log("Fetching ambassador resources...");
+        console.log("Fetching mood mentor resources...");
         
         const { data, error } = await supabase
           .from('resources')
           .select('*')
+          .eq('is_public', true) // Only fetch resources marked as public
           .order('created_at', { ascending: false });
         
         if (error) throw error;
@@ -175,14 +202,55 @@ const Resources = () => {
       }
     };
     
-    fetchAmbassadorResources();
+    fetchMoodMentorResources();
+    
+    // Set up real-time subscription for resources table
+    const resourcesSubscription = supabase
+      .channel('public:resources')
+      .on('postgres_changes', { 
+        event: '*', 
+        schema: 'public', 
+        table: 'resources',
+        filter: 'is_public=eq.true' // Only listen for changes to public resources
+      }, (payload) => {
+        console.log('Real-time change received:', payload);
+        
+        // Handle different types of changes
+        if (payload.eventType === 'INSERT') {
+          // Add new resource
+          const newResource = convertDbResourceToUi(payload.new);
+          setDbResources(prev => [newResource, ...prev]);
+          toast.success('New resource added');
+        } 
+        else if (payload.eventType === 'UPDATE') {
+          // Update existing resource
+          const updatedResource = convertDbResourceToUi(payload.new);
+          setDbResources(prev => 
+            prev.map(res => res.id === updatedResource.id ? updatedResource : res)
+          );
+          toast.info('Resource updated');
+        } 
+        else if (payload.eventType === 'DELETE') {
+          // Remove deleted resource
+          setDbResources(prev => 
+            prev.filter(res => res.id !== payload.old.id)
+          );
+          toast.info('Resource removed');
+        }
+      })
+      .subscribe();
+    
+    // Clean up subscription on unmount
+    return () => {
+      supabase.removeChannel(resourcesSubscription);
+    };
   }, []);
   
   // Handle resource downloads with tracking
   const handleResourceDownload = async (resource: Resource) => {
     try {
       // Only update counts for resources from the database
-      if (resource.id && resource.ambassador_id) {
+      if (resource.id && resource.mentor_id) {
         // Increment download count
         const { error } = await supabase
           .from('resources')
@@ -234,7 +302,7 @@ const Resources = () => {
         }
         
         // Only update counts for resources from the database
-        if (resource.id && resource.ambassador_id) {
+        if (resource.id && resource.mentor_id) {
           // Increment share count
           const { error } = await supabase
             .from('resources')
@@ -325,116 +393,12 @@ const Resources = () => {
     }
   ]
 
-  const staticResources: Resource[] = [
-    {
-      id: "1",
-      title: "Understanding Anxiety Workbook",
-      description: "A comprehensive guide to understanding and managing anxiety symptoms through evidence-based techniques.",
-      type: "workbook",
-      category: ["self-help", "educational"],
-      image: "https://images.unsplash.com/photo-1551847677-dc82d764e1eb?q=80&w=500&auto=format&fit=crop",
-      featured: true,
-      popular: true,
-      author: {
-        name: "Dr. Sarah Mitchell",
-        role: "Clinical Psychologist",
-        avatar: "https://randomuser.me/api/portraits/women/32.jpg"
-      },
-      duration: "45 pages",
-      tags: ["Anxiety", "Self-Help", "Workbook"],
-      downloadUrl: "#"
-    },
-    {
-      id: "2",
-      title: "Mindfulness Meditation Series",
-      description: "A series of guided meditation sessions designed for stress reduction and mental clarity.",
-      type: "audio",
-      category: ["self-help"],
-      image: "https://images.unsplash.com/photo-1506126613408-eca07ce68773?q=80&w=500&auto=format&fit=crop",
-      featured: true,
-      author: {
-        name: "Emma Thompson",
-        role: "Meditation Instructor",
-        avatar: "https://randomuser.me/api/portraits/women/44.jpg"
-      },
-      duration: "10-15 minutes each",
-      tags: ["Meditation", "Mindfulness", "Audio"],
-      externalUrl: "#"
-    },
-    {
-      id: "3",
-      title: "Recognizing Depression: Signs and Symptoms",
-      description: "An informative video explaining the common signs and symptoms of depression, with advice on when to seek help.",
-      type: "video",
-      category: ["educational", "video"],
-      image: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?q=80&w=500&auto=format&fit=crop",
-      new: true,
-      author: {
-        name: "Dr. James Wilson",
-        role: "Psychiatrist",
-        avatar: "https://randomuser.me/api/portraits/men/32.jpg"
-      },
-      duration: "18 minutes",
-      tags: ["Depression", "Education", "Video"],
-      externalUrl: "#"
-    },
-    {
-      id: "4",
-      title: "Stress Management Techniques",
-      description: "Learn practical techniques to manage stress in your daily life through interactive exercises.",
-      type: "tool",
-      category: ["self-help", "digital"],
-      image: "https://images.unsplash.com/photo-1599420186946-7b6fb4e297f0?q=80&w=500&auto=format&fit=crop",
-      popular: true,
-      author: {
-        name: "Dr. Michael Chen",
-        role: "Health Psychologist",
-        avatar: "https://randomuser.me/api/portraits/men/52.jpg"
-      },
-      tags: ["Stress", "Management", "Interactive"],
-      externalUrl: "#"
-    },
-    {
-      id: "5",
-      title: "Building Healthy Relationships",
-      description: "A guide to developing and maintaining healthy relationships with partners, family members, and friends.",
-      type: "article",
-      category: ["educational", "community"],
-      image: "https://images.unsplash.com/photo-1529156069898-49953e39b3ac?q=80&w=500&auto=format&fit=crop",
-      new: true,
-      author: {
-        name: "Lisa Johnson",
-        role: "Relationship Counselor",
-        avatar: "https://randomuser.me/api/portraits/women/68.jpg"
-      },
-      duration: "12 min read",
-      tags: ["Relationships", "Communication", "Mental Health"],
-      externalUrl: "#"
-    },
-    {
-      id: "6",
-      title: "Sleep Improvement Guide",
-      description: "Evidence-based strategies to improve your sleep quality and establish healthy sleep patterns.",
-      type: "workbook",
-      category: ["self-help"],
-      image: "https://images.unsplash.com/photo-1631157769375-463e45dd220c?q=80&w=500&auto=format&fit=crop",
-      author: {
-        name: "Dr. Rebecca Lewis",
-        role: "Sleep Specialist",
-        avatar: "https://randomuser.me/api/portraits/women/22.jpg"
-      },
-      duration: "28 pages",
-      tags: ["Sleep", "Health", "Self-Care"],
-      downloadUrl: "#"
-    }
-  ]
+  // Use only resources from the database
+  const resources = [...dbResources];
   
-  // Combine static resources with dynamic ones from the database
-  const resources = [...staticResources, ...dbResources];
-  
-  // Make sure at least one ambassador resource is marked as featured if available
+  // Make sure at least one mood mentor resource is marked as featured if available
   if (dbResources.length > 0 && !dbResources.some(r => r.featured)) {
-    // Mark the first ambassador resource as featured
+    // Mark the first mood mentor resource as featured
     dbResources[0].featured = true;
   }
   
@@ -581,9 +545,9 @@ const Resources = () => {
         <h2 className="text-2xl font-bold text-gray-900 mb-6">Featured Resources</h2>
         
         {isLoading ? (
-          <div className="text-center py-12">
+          <div className="text-center py-12 bg-gray-50 rounded-lg">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500 mx-auto mb-4"></div>
-            <p className="text-gray-500">Loading resources...</p>
+            <p className="text-gray-500">Loading featured resources...</p>
           </div>
         ) : featuredResources.length > 0 ? (
           <motion.div
@@ -605,6 +569,10 @@ const Resources = () => {
                       src={resource.image} 
                       alt={resource.title}
                       className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = "https://placehold.co/400x300?text=Resource+Image";
+                      }}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/70 to-transparent flex flex-col justify-end p-5">
                       <div className="flex items-center mb-2">
@@ -649,7 +617,7 @@ const Resources = () => {
                         </Badge>
                       ))}
                     </div>
-            </CardContent>
+                  </CardContent>
                   <CardFooter className="p-5 pt-0 flex justify-between items-center">
                     <div className="flex items-center gap-2">
                       {getResourceActionButton(resource)}
@@ -664,16 +632,27 @@ const Resources = () => {
                     </div>
                     <Button variant="ghost" size="icon" className="text-gray-500 hover:text-red-500">
                       <Heart className="h-5 w-5" />
-              </Button>
-            </CardFooter>
-          </Card>
+                    </Button>
+                  </CardFooter>
+                </Card>
               </motion.div>
-        ))}
+            ))}
           </motion.div>
         ) : (
-          <div className="text-center py-8 text-gray-500">
-            No featured resources available
-      </div>
+          <div className="text-center py-12 bg-gray-50 rounded-lg">
+            <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-1">No featured resources yet</h3>
+            <p className="text-gray-600 mb-4">
+              Our mood mentors are working on creating helpful resources. Check back soon!
+            </p>
+            <Button 
+              className="bg-blue-600 hover:bg-blue-700"
+              onClick={() => window.location.href = "/sign-up"}
+            >
+              <UserPlus className="mr-2 h-4 w-4" />
+              Sign up for access to more resources
+            </Button>
+          </div>
         )}
       </section>
       
@@ -683,7 +662,7 @@ const Resources = () => {
           <h2 className="text-2xl font-bold text-gray-900">
             All Resources 
             <span className="text-sm font-normal text-gray-500 ml-2">
-              (Static: {staticResources.length}, From Ambassadors: {dbResources.length}, Total: {resources.length})
+              ({resources.length} available)
             </span>
           </h2>
           <div className="flex items-center">
@@ -727,6 +706,10 @@ const Resources = () => {
                       src={resource.image} 
                       alt={resource.title}
                       className="w-full h-full object-cover"
+                      onError={(e) => {
+                        const target = e.target as HTMLImageElement;
+                        target.src = "https://placehold.co/400x300?text=Resource+Image";
+                      }}
                     />
                     <div className="absolute top-2 left-2">
                       <Badge className="bg-gray-800/70 text-white hover:bg-gray-800">
@@ -812,7 +795,14 @@ const Resources = () => {
                 Clear search
               </Button>
             )}
-      </div>
+            <div className="mt-6">
+              <p className="text-gray-600 mb-4">Looking for mental health resources?</p>
+              <Button className="bg-blue-600 hover:bg-blue-700" onClick={() => window.location.href = "/sign-up"}>
+                <UserPlus className="mr-2 h-4 w-4" />
+                Sign up for personalized resources
+              </Button>
+            </div>
+          </div>
         )}
       </section>
     </div>

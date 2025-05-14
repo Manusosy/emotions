@@ -21,9 +21,18 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Logging middleware
+// Enhanced logging middleware
 app.use((req, res, next) => {
-  console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
+  const timestamp = new Date().toISOString();
+  console.log(`[${timestamp}] ${req.method} ${req.url}`);
+  
+  // Log response status on completion
+  const originalEnd = res.end;
+  res.end = function(...args) {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - ${res.statusCode}`);
+    return originalEnd.apply(res, args);
+  };
+  
   next();
 });
 
@@ -31,8 +40,11 @@ app.use((req, res, next) => {
 const SUPABASE_URL = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
 const SUPABASE_KEY = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
 
-// Initialize Supabase client with error handling
+// Initialize Supabase client with error handling and retry mechanisms
 let supabase;
+let lastConnectionStatus = false;
+let connectionCheckTime = null;
+
 try {
   supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
     auth: {
@@ -42,16 +54,126 @@ try {
     global: {
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'no-cache'
+        'Cache-Control': 'no-cache',
+        'apikey': SUPABASE_KEY,
+        'Authorization': `Bearer ${SUPABASE_KEY}`
+      },
+      // Add fetch with timeout and retry logic
+      fetch: (url, options) => {
+        console.log(`Supabase request to: ${typeof url === 'string' ? url.split('?')[0] : 'fetch request'}`);
+        
+        // Function to attempt the fetch with timeout
+        const attemptFetch = (retryCount = 0, maxRetries = 3) => {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            controller.abort();
+            console.error(`Supabase request timed out after 15 seconds (attempt ${retryCount + 1}/${maxRetries + 1})`);
+          }, 15000);
+          
+          // Ensure API key is included in headers
+          const mergedOptions = {
+            ...options,
+            signal: controller.signal,
+            headers: {
+              ...options?.headers,
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          };
+          
+          return fetch(url, mergedOptions)
+            .then(response => {
+              clearTimeout(timeoutId);
+              
+              // Check for HTML responses, which indicate an error
+              const contentType = response.headers.get('content-type');
+              if (contentType && contentType.includes('text/html')) {
+                console.error('Supabase returned HTML instead of JSON - likely an error');
+                throw new Error('Received HTML response instead of JSON from Supabase');
+              }
+              
+              return response;
+            })
+            .catch(err => {
+              clearTimeout(timeoutId);
+              console.error(`Supabase fetch error (attempt ${retryCount + 1}/${maxRetries + 1}):`, err.message);
+              
+              // If we have retries left and the error is retryable, try again
+              if (retryCount < maxRetries && 
+                 (err.name === 'AbortError' || 
+                  err.message.includes('network') || 
+                  err.message.includes('timeout'))) {
+                
+                console.log(`Retrying Supabase request (attempt ${retryCount + 2}/${maxRetries + 1})...`);
+                
+                // Exponential backoff delay
+                const delay = Math.min(1000 * Math.pow(1.5, retryCount), 5000);
+                return new Promise(resolve => setTimeout(resolve, delay))
+                  .then(() => attemptFetch(retryCount + 1, maxRetries));
+              }
+              
+              throw err;
+            });
+        };
+        
+        return attemptFetch();
       }
     }
   });
   console.log('Supabase client initialized');
+  
+  // Initial connection check
+  checkSupabaseConnection()
+    .then(isConnected => {
+      console.log(`Initial Supabase connection: ${isConnected ? 'Connected' : 'Disconnected'}`);
+      lastConnectionStatus = isConnected;
+      connectionCheckTime = new Date();
+    })
+    .catch(err => {
+      console.error('Initial connection check failed:', err);
+    });
+  
+  // Set up periodic connection checks if not in production
+  if (process.env.NODE_ENV !== 'production') {
+    setInterval(() => {
+      checkSupabaseConnection()
+        .then(isConnected => {
+          if (isConnected !== lastConnectionStatus) {
+            console.log(`Supabase connection changed: ${isConnected ? 'Connected' : 'Disconnected'}`);
+            lastConnectionStatus = isConnected;
+          }
+          connectionCheckTime = new Date();
+        })
+        .catch(err => {
+          console.error('Connection check failed:', err);
+        });
+    }, 60000); // Check every minute
+  }
 } catch (error) {
   console.error('Error initializing Supabase client:', error);
 }
 
-// Health check endpoint
+// Function to check Supabase connection
+async function checkSupabaseConnection() {
+  if (!supabase) return false;
+  
+  try {
+    // Try a lightweight query to check connection
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id')
+      .limit(1);
+      
+    return !error;
+  } catch (err) {
+    console.error('Supabase connection check error:', err);
+    return false;
+  }
+}
+
+// Test endpoint
 app.get('/api/test', (req, res) => {
   res.json({
     status: 'ok',
@@ -328,10 +450,23 @@ app.get('/api/db-fix', async (req, res) => {
   try {
     console.log('Attempting to establish a fresh database connection...');
     
-    // Set proper content type header immediately
+    // Set proper content type header immediately and disable caching
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     
-    // Create a completely new client instance
+    // Allow CORS
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    
+    // For OPTIONS requests (CORS preflight), return immediately
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+    
+    // Create a completely new client instance with robust error handling
     const freshClient = createClient(SUPABASE_URL, SUPABASE_KEY, {
       auth: {
         autoRefreshToken: true,
@@ -340,52 +475,115 @@ app.get('/api/db-fix', async (req, res) => {
       global: {
         headers: {
           'Content-Type': 'application/json',
-          'Cache-Control': 'no-cache'
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
+        },
+        // Add fetch with timeout and retry for the fresh client
+        fetch: (url, options) => {
+          console.log(`Fresh client request to: ${typeof url === 'string' ? url.split('?')[0] : 'fetch request'}`);
+          
+          // Add timeout to prevent hanging requests
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => {
+            controller.abort();
+            console.error('Fresh client request timed out after 10 seconds');
+          }, 10000);
+          
+          // Merge the abort signal with existing options and ensure API key is included
+          const mergedOptions = {
+            ...options,
+            signal: controller.signal,
+            headers: {
+              ...options?.headers,
+              'Cache-Control': 'no-cache',
+              'Pragma': 'no-cache',
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
+          };
+          
+          // Make the request with error handling
+          return fetch(url, mergedOptions)
+            .then(response => {
+              clearTimeout(timeoutId);
+              return response;
+            })
+            .catch(err => {
+              clearTimeout(timeoutId);
+              console.error("Fresh client fetch error:", err.message);
+              throw err;
+            });
         }
       }
     });
     
     // Try querying with the fresh client
     console.log('Testing fresh client with a simple query...');
-    const { data, error } = await freshClient
-      .from('user_profiles')
-      .select('id')
-      .limit(1);
     
-    if (error) {
-      console.error('Fresh client connection failed:', error);
+    try {
+      const { data, error } = await freshClient
+        .from('user_profiles')
+        .select('id')
+        .limit(1);
       
+      if (error) {
+        console.error('Fresh client connection failed:', error);
+        
+        // Even if the connection failed, still return a properly structured response
+        // with valid JSON format
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to establish a fresh database connection',
+          error: {
+            message: error.message || 'Database connection error',
+            code: error.code || 'UNKNOWN',
+            details: error.details || 'No additional details'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
+      
+      // Use this new client as our global client
+      supabase = freshClient;
+      
+      const result = {
+        success: true,
+        message: 'Successfully established a fresh database connection',
+        connectionInfo: {
+          url: SUPABASE_URL.replace(/^(https?:\/\/[^\/]+).*$/, '$1'),
+          timestamp: new Date().toISOString()
+        }
+      };
+      
+      console.log('DB fix successful, returning:', result);
+      return res.json(result);
+    } catch (queryError) {
+      console.error('Query with fresh client failed:', queryError);
+      
+      // Ensure we return a valid JSON response even for unexpected query errors
       return res.status(500).json({
         success: false,
-        message: 'Failed to establish a fresh database connection',
+        message: 'Query with fresh client failed',
         error: {
-          message: error.message,
-          code: error.code,
-          details: error.details
+          message: queryError.message || 'Unknown error',
+          type: queryError.name || 'QueryError',
+          stack: process.env.NODE_ENV === 'development' ? queryError.stack : undefined
         },
         timestamp: new Date().toISOString()
       });
     }
-    
-    // Use this new client as our global client
-    supabase = freshClient;
-    
-    return res.json({
-      success: true,
-      message: 'Successfully established a fresh database connection',
-      connectionInfo: {
-        url: SUPABASE_URL.replace(/^(https?:\/\/[^\/]+).*$/, '$1'),
-        timestamp: new Date().toISOString()
-      }
-    });
   } catch (error) {
     console.error('Unexpected error in db-fix:', error);
     
+    // Ensure we still return valid JSON even on error
     return res.status(500).json({
       success: false,
       message: 'An unexpected error occurred',
       error: {
-        message: error.message
+        message: error.message || 'Unknown error',
+        type: error.name || 'Error'
       },
       timestamp: new Date().toISOString()
     });
@@ -397,6 +595,19 @@ app.get('/api/supabase-status', async (req, res) => {
   try {
     // Set proper content type header immediately
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    
+    // Allow CORS
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+    
+    // For OPTIONS requests (CORS preflight), return immediately
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
     
     // Mask the key for security
     const maskedKey = SUPABASE_KEY ? 
@@ -426,19 +637,36 @@ app.get('/api/supabase-status', async (req, res) => {
     let pingError = null;
     
     try {
-      const startTime = Date.now();
-      const pingResponse = await fetch(SUPABASE_URL, {
-        method: 'HEAD',
-        headers: {
-          'apikey': SUPABASE_KEY,
-          'Cache-Control': 'no-cache'
-        }
-      });
+      console.log('Attempting to ping Supabase URL:', SUPABASE_URL);
       
-      pingTime = Date.now() - startTime;
-      endpointReachable = pingResponse.ok || pingResponse.status < 500;
+      const startTime = Date.now();
+      
+      // Create an AbortController to handle timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      try {
+        const pingResponse = await fetch(SUPABASE_URL, {
+          method: 'HEAD',
+          headers: {
+            'apikey': SUPABASE_KEY,
+            'Cache-Control': 'no-cache'
+          },
+          signal: controller.signal
+        });
+        
+        clearTimeout(timeoutId);
+        pingTime = Date.now() - startTime;
+        endpointReachable = pingResponse.ok || pingResponse.status < 500;
+        
+        console.log(`Supabase ping response: ${pingResponse.status} in ${pingTime}ms`);
+      } catch (fetchError) {
+        clearTimeout(timeoutId);
+        throw fetchError; // rethrow to be caught by outer catch
+      }
     } catch (e) {
       pingError = e.message;
+      console.error('Supabase ping failed:', e);
     }
     
     // Try a test query
@@ -446,21 +674,44 @@ app.get('/api/supabase-status', async (req, res) => {
     let queryError = null;
     
     try {
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('count()')
-        .limit(1)
-        .single();
-      
-      querySuccessful = !error;
-      if (error) {
-        queryError = error.message;
+      if (supabase) {
+        console.log('Testing Supabase with a simple query...');
+        
+        // Add timeout protection
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 5000);
+        
+        try {
+          const { data, error } = await supabase
+            .from('user_profiles')
+            .select('count()')
+            .limit(1)
+            .single();
+          
+          clearTimeout(timeoutId);
+          querySuccessful = !error;
+          
+          if (error) {
+            queryError = error.message;
+            console.error('Supabase query test failed:', error.message);
+          } else {
+            console.log('Supabase query test successful');
+          }
+        } catch (queryExecError) {
+          clearTimeout(timeoutId);
+          throw queryExecError; // rethrow to be caught by outer catch
+        }
+      } else {
+        queryError = 'Supabase client not initialized';
+        console.error('Cannot test query - Supabase client not initialized');
       }
     } catch (e) {
       queryError = e.message;
+      console.error('Error during Supabase query test:', e);
     }
     
-    return res.json({
+    // Always return a 200 status to ensure the client can read the response
+    return res.status(200).json({
       status: urlIsValid && keyIsValid && endpointReachable ? 'ok' : 'configuration_issues',
       supabase_config: {
         url: {
@@ -487,28 +738,35 @@ app.get('/api/supabase-status', async (req, res) => {
   } catch (error) {
     console.error('Error checking Supabase configuration:', error);
     
-    return res.status(500).json({
+    // Always use status 200 to ensure client can read the response
+    return res.status(200).json({
       status: 'error',
       message: 'Failed to check Supabase configuration',
-      error: error.message,
+      error: error.message || 'Unknown error',
+      details: error.stack ? error.stack.split('\n')[0] : undefined,
       timestamp: new Date().toISOString()
     });
   }
 });
 
-// Health check endpoint
+// Health check endpoint with comprehensive diagnostics
 app.get('/api/health-check', async (req, res) => {
   try {
-    // Set proper content type header immediately
+    // Set proper content type header immediately and disable caching
     res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
     
     const startTime = Date.now();
     
     // Check if Supabase client is initialized
     if (!supabase) {
-      return res.status(500).json({
+      return res.status(503).json({
         status: "error",
+        timestamp: new Date().toISOString(),
         services: {
+          api: true,
           database: false,
           auth: false
         },
@@ -516,30 +774,83 @@ app.get('/api/health-check', async (req, res) => {
       });
     }
     
-    // Check database connection
+    // Check database connection with retry
     let dbConnected = false;
     let dbError = null;
-    let responseTime = null;
+    let dbResponseTime = null;
     
-    try {
-      const dbCheckStart = Date.now();
-      
-      // Try to query a table
-      const { data, error } = await supabase
-        .from('user_profiles')
-        .select('id')
-        .limit(1);
-        
-      responseTime = Date.now() - dbCheckStart;
-      
-      if (error) {
-        dbError = error.message;
-      } else {
-        dbConnected = true;
+    // Function to attempt database check with retries
+    const checkDbWithRetry = async (retries = 2) => {
+      for (let attempt = 0; attempt <= retries; attempt++) {
+        try {
+          const dbCheckStart = Date.now();
+          
+          // Try multiple tables to ensure we get a response
+          let tableChecked = '';
+          let error = null;
+          
+          // Try user_profiles first
+          const { data, error: profileError } = await supabase
+            .from('user_profiles')
+            .select('id')
+            .limit(1)
+            .maybeSingle();
+            
+          if (!profileError) {
+            tableChecked = 'user_profiles';
+            dbResponseTime = Date.now() - dbCheckStart;
+            return { connected: true, table: tableChecked, responseTime: dbResponseTime };
+          }
+          
+          error = profileError;
+          
+          // Try another table as fallback
+          const { data: emotionData, error: emotionError } = await supabase
+            .from('emotions')
+            .select('id')
+            .limit(1)
+            .maybeSingle();
+            
+          if (!emotionError) {
+            tableChecked = 'emotions';
+            dbResponseTime = Date.now() - dbCheckStart;
+            return { connected: true, table: tableChecked, responseTime: dbResponseTime };
+          }
+          
+          // If we've tried multiple times, wait before next attempt
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          
+          // All attempts failed
+          dbResponseTime = Date.now() - dbCheckStart;
+          return { 
+            connected: false, 
+            error: error?.message || 'Database access failed', 
+            responseTime: dbResponseTime 
+          };
+        } catch (error) {
+          // Unexpected error
+          if (attempt < retries) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            continue;
+          }
+          
+          return { 
+            connected: false, 
+            error: error?.message || 'Database check threw an exception', 
+            responseTime: Date.now() - dbCheckStart 
+          };
+        }
       }
-    } catch (error) {
-      dbError = error.message;
-    }
+    };
+    
+    // Run the database check
+    const dbCheck = await checkDbWithRetry();
+    dbConnected = dbCheck.connected;
+    dbResponseTime = dbCheck.responseTime;
+    dbError = dbCheck.error;
     
     // Check auth service
     let authStatus = {
@@ -571,37 +882,69 @@ app.get('/api/health-check', async (req, res) => {
     // Calculate total response time
     const totalResponseTime = Date.now() - startTime;
     
+    // Get system info
+    const systemInfo = {
+      nodeVersion: process.version,
+      platform: process.platform,
+      memory: {
+        total: Math.round(process.memoryUsage().heapTotal / (1024 * 1024)),
+        used: Math.round(process.memoryUsage().heapUsed / (1024 * 1024)),
+        rss: Math.round(process.memoryUsage().rss / (1024 * 1024))
+      },
+      uptime: process.uptime()
+    };
+    
+    // Network check
+    let networkStatus = { connected: true };
+    try {
+      // Simple check to a reliable endpoint
+      const networkCheck = await fetch('https://www.google.com', { 
+        method: 'HEAD',
+        signal: AbortSignal.timeout(5000)
+      });
+      networkStatus.connected = networkCheck.ok;
+    } catch (error) {
+      networkStatus = { 
+        connected: false,
+        error: error.message 
+      };
+    }
+    
+    // Return comprehensive health check
     return res.json({
       status: dbConnected ? "ok" : "error",
+      timestamp: new Date().toISOString(),
       services: {
+        api: true,
         database: dbConnected,
         auth: authStatus.valid
       },
       metrics: {
         responseTime: totalResponseTime,
-        dbResponseTime: responseTime
+        dbResponseTime: dbResponseTime
       },
-      results: {
-        timestamp: new Date().toISOString(),
-        device: {
-          online: true,
-          userAgent: req.headers['user-agent'] || 'unknown'
-        },
-        supabase: { 
-          connected: dbConnected, 
-          details: dbConnected 
-            ? { message: "Connected via user_profiles table" }
-            : { message: "Database connection failed", error: dbError }
-        }
+      details: {
+        database: dbConnected 
+          ? { message: `Connected via ${dbCheck.table || 'database query'}` }
+          : { message: "Database connection failed", error: dbError },
+        auth: authStatus,
+        lastConnectionCheck: connectionCheckTime ? connectionCheckTime.toISOString() : null,
+        connection: lastConnectionStatus
       },
-      auth: authStatus
+      environment: {
+        nodeEnv: process.env.NODE_ENV || 'development',
+        system: systemInfo,
+        network: networkStatus
+      }
     });
   } catch (error) {
     console.error("Health check unhandled error:", error);
     
     return res.status(500).json({
       status: "error",
+      timestamp: new Date().toISOString(),
       services: {
+        api: true,
         database: false,
         auth: false
       },

@@ -1,7 +1,14 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/pages/api/auth/[...nextauth]';
-import prisma from '@/lib/prisma';
+import { createClient } from '@supabase/supabase-js';
+
+// Get Supabase credentials from environment variables
+const supabaseUrl = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
+
+// Initialize Supabase client
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export default async function handler(
   req: NextApiRequest,
@@ -15,31 +22,26 @@ export default async function handler(
 
   if (req.method === 'GET') {
     try {
-      const mentors = await prisma.ambassador.findMany({
-        select: {
-          id: true,
-          fullName: true,
-          email: true,
-          bio: true,
-          createdAt: true,
-          updatedAt: true,
-          reviews: {
-            select: {
-              rating: true,
-            },
-          },
-          bookings: {
-            select: {
-              id: true,
-            },
-          },
-        },
-      });
+      // Fetch mood mentors from Supabase
+      const { data: mentors, error } = await supabase
+        .from('mood_mentors')
+        .select(`
+          id,
+          full_name,
+          email,
+          bio,
+          created_at,
+          updated_at,
+          reviews:mentor_reviews(rating),
+          bookings:mentor_bookings(id)
+        `);
+
+      if (error) throw error;
 
       // Transform the data to match the frontend interface
       const transformedMentors = mentors.map(mentor => {
         // Calculate average rating
-        const ratings = mentor.reviews.map(r => r.rating);
+        const ratings = mentor.reviews?.map(r => r.rating) || [];
         const avgRating = ratings.length > 0 
           ? ratings.reduce((a, b) => a + b, 0) / ratings.length 
           : 0;
@@ -49,12 +51,12 @@ export default async function handler(
 
         return {
           id: mentor.id,
-          name: mentor.fullName,
+          name: mentor.full_name,
           credentials: 'Mental Health Professional', // This should come from a profile extension table
           specialty: 'Mental Health Support', // This should come from a profile extension table
           rating: avgRating,
-          totalRatings: mentor.reviews.length,
-          feedback: mentor.reviews.length,
+          totalRatings: mentor.reviews?.length || 0,
+          feedback: mentor.reviews?.length || 0,
           location: 'Remote', // This should come from a profile extension table
           isFree: true, // This should come from a profile extension table
           therapyTypes: ['Cognitive Behavioral Therapy'], // This should come from a profile extension table

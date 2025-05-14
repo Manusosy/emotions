@@ -59,6 +59,9 @@ export interface MoodMentorProfile {
   created_at: string;
   updated_at: string;
   welcome_dialog_shown?: boolean;
+  gender?: string;
+  country?: string;
+  profile_completion?: number;
 }
 
 interface MoodMentor {
@@ -163,6 +166,28 @@ class MoodMentorService {
     try {
       const response = await api.get(`/api/mood-mentors/${userId}`);
       const data = await response.json();
+      
+      // If we have a profile, enhance it with any user metadata
+      if (data) {
+        try {
+          // Try to get additional user metadata from auth
+          const authResponse = await api.get('/api/auth/user');
+          if (authResponse.ok) {
+            const userData = await authResponse.json();
+            if (userData && userData.user_metadata) {
+              // Merge user metadata with profile data for any missing fields
+              // Don't overwrite existing profile data
+              data.gender = data.gender || userData.user_metadata.gender;
+              data.country = data.country || userData.user_metadata.country;
+              data.specialty = data.specialty || userData.user_metadata.specialty;
+              data.specialties = data.specialties || userData.user_metadata.specialties;
+            }
+          }
+        } catch (error) {
+          // Ignore errors here - we'll just use the profile data we have
+          console.log('Could not enhance profile with user metadata:', error);
+        }
+      }
       
       return { data, error: null };
     } catch (error) {

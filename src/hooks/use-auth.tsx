@@ -19,6 +19,18 @@ interface User {
   role: UserRole;
   full_name: string;
   avatar_url?: string;
+  user_metadata?: {
+    first_name?: string;
+    last_name?: string;
+    full_name?: string;
+    specialty?: string;
+    speciality?: string;
+    specialties?: string[];
+    country?: string;
+    gender?: string;
+    avatar_url?: string;
+    [key: string]: any;
+  };
 }
 
 interface AuthContextType {
@@ -431,7 +443,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Add getFullName function
   const getFullName = useCallback(() => {
     if (!user) return '';
-    return user.full_name || 'User';
+    
+    // If user has full_name and it contains a space (first and last name)
+    if (user.full_name && user.full_name.includes(' ')) {
+      return user.full_name;
+    }
+    
+    // Try to build full name from metadata if available
+    if (user.user_metadata) {
+      // From first_name and last_name fields
+      if (user.user_metadata.first_name && user.user_metadata.last_name) {
+        return `${user.user_metadata.first_name} ${user.user_metadata.last_name}`;
+      }
+      
+      // From firstName and lastName fields (alternate casing)
+      if (user.user_metadata.firstName && user.user_metadata.lastName) {
+        return `${user.user_metadata.firstName} ${user.user_metadata.lastName}`;
+      }
+      
+      // Check if metadata has a properly formatted full_name
+      if (user.user_metadata.full_name && user.user_metadata.full_name.includes(' ')) {
+        return user.user_metadata.full_name;
+      }
+    }
+    
+    // If we still just have a single name, return that
+    if (user.full_name) {
+      return user.full_name;
+    }
+    
+    // Fallback to email-based name or default
+    return user.email?.split('@')[0] || 'User';
   }, [user]);
 
   const value = {

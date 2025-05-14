@@ -23,10 +23,12 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import syncService from "@/services/syncService";
 import { useConnection } from '@/contexts/ConnectionContext';
 import { checkApiDirectly } from '@/utils/network';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 // Define profile form schema
 const profileFormSchema = z.object({
-  full_name: z.string().min(2, "Name must be at least 2 characters"),
+  firstName: z.string().min(2, "First name must be at least 2 characters"),
+  lastName: z.string().min(2, "Last name must be at least 2 characters"),
   email: z.string().email("Please enter a valid email"),
   phone_number: z.string().optional(),
   bio: z.string().min(20, "Bio should be at least 20 characters"),
@@ -52,7 +54,8 @@ const profileFormSchema = z.object({
   avatar_url: z.string().optional(),
   availability_status: z.string().optional(),
   consultation_fee: z.number().optional(),
-  isFree: z.boolean().optional()
+  isFree: z.boolean().optional(),
+  gender: z.string().optional(),
 });
 
 type ProfileFormValues = z.infer<typeof profileFormSchema>;
@@ -80,6 +83,8 @@ interface MoodMentorProfile {
   therapyTypes?: any[];
   consultation_fee?: number;
   isFree?: boolean;
+  profile_completion?: number;
+  gender?: string;
 }
 
 export default function ProfileEditPage() {
@@ -94,11 +99,34 @@ export default function ProfileEditPage() {
   const [avatarPreview, setAvatarPreview] = useState<string>("");
   const [apiStatus, setApiStatus] = useState<{apiConnected: boolean, databaseConnected: boolean}|null>(null);
   
+  // Add state to track if current tab is valid/complete
+  const [sectionValidity, setSectionValidity] = useState({
+    "basic-info": false,
+    "professional": false,
+    "education": false,
+    "services": false
+  });
+
+  // Add state to track which sections are read-only
+  const [readOnlySections, setReadOnlySections] = useState({
+    "basic-info": false,
+    "professional": false,
+    "education": false,
+    "services": false
+  });
+  
+  // Add state to track failed save attempts
+  const [failedSaveAttempts, setFailedSaveAttempts] = useState(0);
+  
+  // Add saving status
+  const [savingStatus, setSavingStatus] = useState<'idle' | 'saving' | 'retrying' | 'error' | 'success'>('idle');
+  
   // Initialize form with default empty values
   const form = useForm<ProfileFormValues>({
     resolver: zodResolver(profileFormSchema),
     defaultValues: {
-      full_name: "",
+      firstName: "",
+      lastName: "",
       email: "",
       phone_number: "",
       bio: "",
@@ -112,9 +140,89 @@ export default function ProfileEditPage() {
       avatar_url: "",
       availability_status: "Available",
       consultation_fee: 0,
-      isFree: true
+      isFree: true,
+      gender: ""
     }
   });
+  
+  // Function to calculate profile completion percentage
+  const calculateProfileCompletion = (data: ProfileFormValues) => {
+    // Calculate section weights (importance)
+    const sectionWeights = {
+      basicInfo: 0.25,   // 25% of total
+      professional: 0.35, // 35% of total
+      education: 0.25,   // 25% of total
+      services: 0.15     // 15% of total
+    };
+    
+    // Calculate completion for each section
+    
+    // Basic Info section completion (first name, last name, email are required)
+    const basicInfoFields = ['firstName', 'lastName', 'email', 'location', 'gender', 'languages', 'phone_number'];
+    const basicInfoRequired = ['firstName', 'lastName', 'email', 'location', 'gender', 'languages'];
+    
+    const completedBasicFields = basicInfoFields.filter(field => {
+      const value = data[field as keyof ProfileFormValues];
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return typeof value === 'string' && value.trim() !== '';
+    }).length;
+    
+    const basicInfoCompletion = Math.min(completedBasicFields / basicInfoRequired.length, 1) * 100;
+    
+    // Professional section completion (bio and specialty are required)
+    const professionalFields = ['bio', 'specialty', 'specialties', 'credentials'];
+    const professionalRequired = ['bio', 'specialty'];
+    
+    const completedProfessionalFields = professionalFields.filter(field => {
+      const value = data[field as keyof ProfileFormValues];
+      if (Array.isArray(value)) {
+        return value.length > 0;
+      }
+      return typeof value === 'string' && value.trim() !== '';
+    }).length;
+    
+    const professionalCompletion = Math.min(completedProfessionalFields / professionalRequired.length, 1) * 100;
+    
+    // Education section completion
+    const hasCompleteEducation = data.education?.some(
+      edu => edu.university?.trim().length >= 2 && 
+             edu.degree?.trim().length >= 2 && 
+             edu.period?.trim().length >= 2
+    );
+    
+    const hasCompleteExperience = data.experience?.some(
+      exp => exp.company?.trim().length >= 2 && 
+             exp.position?.trim().length >= 2 && 
+             exp.period?.trim().length >= 2
+    );
+    
+    const educationCompletion = ((hasCompleteEducation ? 1 : 0) + (hasCompleteExperience ? 1 : 0)) / 2 * 100;
+    
+    // Services section completion
+    const servicesFields = ['availability_status', 'consultation_fee', 'isFree'];
+    const servicesRequired = ['availability_status'];
+    
+    const completedServicesFields = servicesFields.filter(field => {
+      const value = data[field as keyof ProfileFormValues];
+      if (typeof value === 'boolean') return true;
+      if (typeof value === 'number') return true;
+      return typeof value === 'string' && value.trim() !== '';
+    }).length;
+    
+    const servicesCompletion = Math.min(completedServicesFields / servicesRequired.length, 1) * 100;
+    
+    // Calculate weighted total
+    const weightedTotal = (
+      (basicInfoCompletion / 100) * sectionWeights.basicInfo +
+      (professionalCompletion / 100) * sectionWeights.professional +
+      (educationCompletion / 100) * sectionWeights.education +
+      (servicesCompletion / 100) * sectionWeights.services
+    ) * 100;
+    
+    return Math.round(weightedTotal);
+  };
   
   // Function to fetch profile data
   const fetchProfile = async () => {
@@ -125,17 +233,48 @@ export default function ProfileEditPage() {
         return;
       }
 
+      // Helper function to get proper full name
+      const getProperFullName = (userData: any) => {
+        // First check if full_name exists directly
+        if (userData.full_name && userData.full_name.includes(" ")) {
+          return userData.full_name;
+        }
+        
+        // Next try to combine first_name and last_name from user_metadata
+        if (userData.user_metadata) {
+          if (userData.user_metadata.first_name && userData.user_metadata.last_name) {
+            return `${userData.user_metadata.first_name} ${userData.user_metadata.last_name}`;
+          }
+          
+          // Check if metadata has a properly formatted full_name
+          if (userData.user_metadata.full_name && userData.user_metadata.full_name.includes(" ")) {
+            return userData.user_metadata.full_name;
+          }
+        }
+        
+        // Try to extract from email as a last resort
+        return userData.email?.split('@')[0] || '';
+      };
+
       // Fetch profile data using our custom services
       const mentorProfile = await moodMentorService.getMentorProfile(user.id);
       
       if (!mentorProfile.error && mentorProfile.data) {
         const profileData = mentorProfile.data;
         
+        // Get proper full name (with first and last name)
+        const properFullName = profileData.full_name && profileData.full_name.includes(" ") 
+          ? profileData.full_name
+          : getProperFullName(user);
+        
+        // Split the full name into first and last name
+        const { firstName, lastName } = splitFullName(properFullName);
+        
         // Format the profile data
         const formattedProfile: MoodMentorProfile = {
           id: user.id,
           mentor_id: user.id,
-          full_name: profileData.full_name || '',
+          full_name: properFullName,
           email: profileData.email || user.email || '',
           phone_number: profileData.phone_number || '',
           bio: profileData.bio || '',
@@ -160,15 +299,18 @@ export default function ProfileEditPage() {
           updated_at: profileData.updated_at || new Date().toISOString(),
           therapyTypes: profileData.therapyTypes || [],
           consultation_fee: profileData.consultation_fee || 0,
-          isFree: profileData.isFree !== undefined ? profileData.isFree : true
+          isFree: profileData.isFree !== undefined ? profileData.isFree : true,
+          profile_completion: profileData.profile_completion || 0,
+          gender: profileData.gender || ''
         };
         
         setProfile(formattedProfile);
         setAvatarPreview(formattedProfile.avatar_url || '');
         
         // Populate form with profile data
-        form.reset({
-          full_name: formattedProfile.full_name,
+        const formData = {
+          firstName,
+          lastName,
           email: formattedProfile.email,
           phone_number: formattedProfile.phone_number,
           bio: formattedProfile.bio,
@@ -182,52 +324,94 @@ export default function ProfileEditPage() {
           avatar_url: formattedProfile.avatar_url,
           availability_status: formattedProfile.availability_status,
           consultation_fee: formattedProfile.consultation_fee,
-          isFree: formattedProfile.isFree
-        });
+          isFree: formattedProfile.isFree,
+          gender: formattedProfile.gender
+        };
+        
+        // Reset form and calculate completion percentage
+        form.reset(formData);
+        
+        // Calculate profile completion percentage
+        const completionPercentage = calculateProfileCompletion(formData);
+        
+        // If calculated completion differs from stored completion, update it
+        if (completionPercentage !== profileData.profile_completion) {
+          try {
+            // Update profile completion in the database
+            await moodMentorService.updateMentorProfile(user.id, {
+              profile_completion: completionPercentage
+            });
+          } catch (error) {
+            console.error('Error updating profile completion:', error);
+          }
+        }
       } else {
         // Create new profile if none exists
         console.log("No profile found, creating empty profile form");
         
-        // Set empty profile
+        // Get proper full name (with first and last name)
+        const properFullName = getProperFullName(user);
+        
+        // Split the full name into first and last name
+        const { firstName, lastName } = splitFullName(properFullName);
+        
+        // Set empty profile with defaults from auth data if available
         const emptyProfile: MoodMentorProfile = {
           id: user.id,
           mentor_id: user.id,
-          full_name: user.email?.split('@')[0] || '',
+          full_name: properFullName,
           email: user.email || '',
           phone_number: '',
           bio: '',
-          speciality: '',
-          specialty: '',
-          specialties: [],
+          speciality: user.user_metadata?.speciality || user.user_metadata?.specialty || '',
+          specialty: user.user_metadata?.specialty || user.user_metadata?.speciality || '',
+          specialties: user.user_metadata?.specialties || [],
+          credentials: '',
+          location: user.user_metadata?.country || '',
           languages: ['English'],
           education: [{ university: "", degree: "", period: "" }],
           experience: [{ company: "", position: "", period: "" }],
           availability_status: 'Available',
-          avatar_url: '',
+          avatar_url: user.user_metadata?.avatar_url || '',
           created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
+          updated_at: new Date().toISOString(),
+          gender: user.user_metadata?.gender || ''
         };
         
         setProfile(emptyProfile);
         
-        // Reset form with empty profile
-        form.reset({
-          full_name: emptyProfile.full_name,
+        // Reset form with empty profile but with user data where available
+        const formData = {
+          firstName,
+          lastName,
           email: emptyProfile.email,
           phone_number: '',
           bio: '',
-          specialty: '',
-          specialties: [],
+          specialty: emptyProfile.specialty || '',
+          specialties: emptyProfile.specialties || [],
           credentials: '',
-          location: '',
+          location: user.user_metadata?.country || '',
           languages: ['English'],
           education: [{ university: "", degree: "", period: "" }],
           experience: [{ company: "", position: "", period: "" }],
-          avatar_url: '',
+          avatar_url: emptyProfile.avatar_url || '',
           availability_status: 'Available',
           consultation_fee: 0,
-          isFree: true
-        });
+          isFree: true,
+          gender: user.user_metadata?.gender || ''
+        };
+        
+        form.reset(formData);
+        
+        // Calculate and save initial profile completion
+        const initialCompletion = calculateProfileCompletion(formData);
+        try {
+          await moodMentorService.updateMentorProfile(user.id, {
+            profile_completion: initialCompletion
+          });
+        } catch (error) {
+          console.error('Error updating initial profile completion:', error);
+        }
       }
     } catch (error) {
       console.error('Error fetching profile:', error);
@@ -237,19 +421,71 @@ export default function ProfileEditPage() {
     }
   };
   
-  // Check API connection before submitting
-  const checkApiStatus = async () => {
+  // Update the checkApiStatus function to force connection or show error dialog
+  const checkApiStatus = async (forceConnection = false) => {
     try {
       const status = await checkApiDirectly();
       setApiStatus(status);
+      
+      // If we're forcing a connection and have an error
+      if (forceConnection && (!status?.apiConnected || !status?.databaseConnected)) {
+        // Display a more helpful error message to the user
+        toast.error(
+          `Could not connect to the server: ${status?.error || 'Unknown error'}`,
+          { duration: 6000 }
+        );
+        setSavingStatus('error');
+        return null;
+      }
+      
       return status;
     } catch (error) {
       console.error("API status check failed:", error);
+      
+      if (forceConnection) {
+        toast.error(
+          "Cannot connect to the server. Please check your connection and try again.",
+          { duration: 6000 }
+        );
+        setSavingStatus('error');
+      }
+      
       return null;
     }
   };
   
-  // Function to handle form submission
+  // Function to retry API calls
+  const retryApiCall = async <T,>(
+    apiCall: () => Promise<T>,
+    maxRetries = 3,
+    initialDelay = 1000
+  ): Promise<T> => {
+    let lastError;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        if (attempt > 0) {
+          setSavingStatus('retrying');
+          toast.info(`Retrying... (attempt ${attempt + 1}/${maxRetries})`);
+        }
+        
+        return await apiCall();
+      } catch (error) {
+        lastError = error;
+        console.error(`API call failed (attempt ${attempt + 1}/${maxRetries}):`, error);
+        
+        if (attempt < maxRetries - 1) {
+          // Wait before retrying with exponential backoff
+          const delay = initialDelay * Math.pow(2, attempt);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    
+    throw lastError;
+  };
+  
+  // Update the onSubmit function to use retries and force server connection
   const onSubmit = async (data: ProfileFormValues) => {
     if (!user) {
       toast.error("You must be logged in to update your profile");
@@ -257,70 +493,73 @@ export default function ProfileEditPage() {
     }
     
     try {
+      setSavingStatus('saving');
       setIsSaving(true);
       
-      // Check API status directly before proceeding
-      const apiStatus = await checkApiStatus();
-      const canUseApi = apiStatus?.apiConnected && apiStatus?.databaseConnected;
-      const shouldSaveLocally = !canUseApi;
+      // Force API status check to ensure we're connected
+      const apiStatus = await checkApiStatus(true);
+      
+      // If API check failed and we're forcing connection, return - error toast already shown
+      if (!apiStatus) {
+        setIsSaving(false);
+        return;
+      }
+      
+      const canUseApi = apiStatus.apiConnected && apiStatus.databaseConnected;
+      
+      // If API is not available and this isn't a retry, show error and exit
+      if (!canUseApi && failedSaveAttempts === 0) {
+        toast.error(
+          "Cannot connect to the server. Please check your connection.",
+          { duration: 5000 }
+        );
+        setFailedSaveAttempts(prev => prev + 1);
+        setIsSaving(false);
+        setSavingStatus('error');
+        return;
+      }
       
       // Show saving indicator in UI
       toast.loading("Saving your profile...");
       
+      // Combine first and last name into full_name
+      const full_name = `${data.firstName} ${data.lastName}`.trim();
+      
       // Upload avatar if there's a new one
       let avatarUrl = profile?.avatar_url || '';
       if (avatarFile) {
-        // Only attempt upload if we're online and API is working
-        if (canUseApi) {
+        try {
           const avatarUploadFormData = new FormData();
           avatarUploadFormData.append('file', avatarFile);
           avatarUploadFormData.append('userId', user.id);
           
-          const uploadResult = await moodMentorService.uploadProfileImage(avatarUploadFormData);
+          // Use retry mechanism for avatar upload
+          const uploadResult = await retryApiCall(
+            () => moodMentorService.uploadProfileImage(avatarUploadFormData),
+            3,
+            1000
+          );
           
           if (!uploadResult.error && uploadResult.data) {
             avatarUrl = uploadResult.data.url;
           } else {
-            console.error("Avatar upload failed:", uploadResult.error);
-            // Use local URL as fallback
-            const localUrl = URL.createObjectURL(avatarFile);
-            avatarUrl = localUrl;
+            throw new Error(uploadResult.error || "Failed to upload image");
           }
-        } else {
-          // If offline or API not working, save to local storage and use local URL for now
-          const localUrl = URL.createObjectURL(avatarFile);
-          avatarUrl = localUrl;
-          // Store the file for later upload
-          localStorage.setItem('pendingAvatarUpload', JSON.stringify({
-            userId: user.id,
-            createdAt: new Date().toISOString()
-          }));
+        } catch (uploadError) {
+          console.error("Avatar upload failed after retries:", uploadError);
+          // Continue with profile save even if avatar upload fails
+          // We'll keep the existing avatar
+          toast.error("Failed to upload profile image, but continuing with profile save");
         }
       }
       
       // Calculate profile completion percentage
-      const requiredFields = ['full_name', 'email', 'bio', 'specialty'];
-      const additionalFields = ['phone_number', 'location', 'languages', 'education', 'experience', 'credentials'];
-      const completedRequired = requiredFields.filter(field => Boolean(data[field as keyof ProfileFormValues])).length;
-      const completedAdditional = additionalFields.filter(field => {
-        const value = data[field as keyof ProfileFormValues];
-        if (Array.isArray(value)) {
-          return value.length > 0 && value.some((item: any) => 
-            typeof item === 'object' ? Object.values(item).some(v => Boolean(v)) : Boolean(item)
-          );
-        }
-        return Boolean(value);
-      }).length;
-      
-      const completionPercentage = Math.round(
-        ((completedRequired / requiredFields.length) * 0.6 + 
-        (completedAdditional / additionalFields.length) * 0.4) * 100
-      );
+      const completionPercentage = calculateProfileCompletion(data);
       
       // Prepare the profile data updates
       const baseUpdates = {
         id: user.id,
-        full_name: data.full_name,
+        full_name,
         email: data.email,
         phone_number: data.phone_number || '',
         bio: data.bio,
@@ -332,7 +571,8 @@ export default function ProfileEditPage() {
         isFree: data.isFree !== undefined ? data.isFree : true,
         avatar_url: avatarUrl,
         updated_at: new Date().toISOString(),
-        profile_completion: completionPercentage
+        profile_completion: completionPercentage,
+        gender: data.gender
       };
       
       // Add the array and JSON fields
@@ -356,114 +596,158 @@ export default function ProfileEditPage() {
       // Combine all updates
       const updates = { ...baseUpdates, ...complexUpdates };
       
-      // Save the profile data based on connection status
-      if (canUseApi) {
-        // Update the profile using our service if we're online and API is working
-        const updateResult = await moodMentorService.updateMentorProfile(user.id, updates);
+      // Use retry mechanism for profile update
+      try {
+        const updateResult = await retryApiCall(
+          () => moodMentorService.updateMentorProfile(user.id, updates),
+          3,
+          1000
+        );
         
         if (!updateResult.error) {
           toast.success("Profile updated successfully!");
+          setSavingStatus('success');
+          
           // After a brief delay, navigate back to the dashboard
           setTimeout(() => {
             navigate('/mood-mentor-dashboard');
           }, 1500);
         } else {
-          console.error("Error updating profile:", updateResult.error);
-          // Save locally if API call fails
-          const savedLocally = saveProfileLocally(updates);
-          if (savedLocally) {
-            toast.info("Profile saved locally. It will sync when connection is restored.");
-          } else {
-            toast.error("Failed to update profile. Please try again.");
-          }
+          throw new Error(updateResult.error);
         }
-      } else {
-        // Save locally if API is not available
-        const savedLocally = saveProfileLocally(updates);
+      } catch (updateError) {
+        console.error("Error updating profile after retries:", updateError);
         
-        if (savedLocally) {
-          toast.success("Profile saved locally. It will sync when connection is restored.");
-          // Still navigate away after a brief delay
-          setTimeout(() => {
-            navigate('/mood-mentor-dashboard');
-          }, 1500);
+        // If we've already tried local saving multiple times, show a more serious error
+        if (failedSaveAttempts >= 2) {
+          toast.error(
+            "Failed to save profile after multiple attempts. Please try again later or contact support.",
+            { duration: 8000 }
+          );
         } else {
-          toast.error("Failed to save profile locally. Please check your browser storage.");
+          toast.error(
+            "Failed to update profile. Please try again.",
+            { duration: 5000 }
+          );
+          setFailedSaveAttempts(prev => prev + 1);
         }
+        setSavingStatus('error');
       }
     } catch (error) {
       console.error("Error saving profile:", error);
       toast.error("An error occurred while saving your profile");
-      
-      // Try to save locally on error
-      try {
-        const formValues = form.getValues();
-        
-        // Prepare data with required fields
-        const updates = {
-          ...formValues,
-          id: user.id,
-          updated_at: new Date().toISOString(),
-          education: formValues.education?.map(edu => ({
-            university: edu.university || "",
-            degree: edu.degree || "",
-            period: edu.period || "",
-            duration: edu.period || "" // Add duration field to match type
-          })) || [],
-          experience: formValues.experience?.map(exp => ({
-            company: exp.company || "",
-            position: exp.position || "",
-            period: exp.period || "",
-            duration: exp.period || "" // Add duration field to match type
-          })) || []
-        };
-        
-        const savedLocally = saveProfileLocally(updates);
-        
-        if (savedLocally) {
-          toast.info("Profile saved locally. It will sync when connection is restored.");
-        }
-      } catch (localSaveError) {
-        console.error("Failed to save locally:", localSaveError);
-      }
+      setSavingStatus('error');
     } finally {
       setIsSaving(false);
       toast.dismiss();
     }
   };
   
-  // Function to save profile data locally
-  const saveProfileLocally = (profileData: any): boolean => {
-    try {
-      // Get existing profiles or initialize empty array
-      const existingProfiles = JSON.parse(localStorage.getItem('offlineMentorProfiles') || '[]');
-      
-      // Check if this profile already exists locally
-      const existingIndex = existingProfiles.findIndex((p: any) => p.id === profileData.id);
-      
-      if (existingIndex >= 0) {
-        // Update existing profile
-        existingProfiles[existingIndex] = {
-          ...existingProfiles[existingIndex],
-          ...profileData,
-          updatedLocally: new Date().toISOString()
-        };
-      } else {
-        // Add new profile
-        existingProfiles.push({
-          ...profileData,
-          updatedLocally: new Date().toISOString()
-        });
-      }
-      
-      // Save back to localStorage
-      localStorage.setItem('offlineMentorProfiles', JSON.stringify(existingProfiles));
-      console.log("Profile saved to localStorage for later sync");
-      return true;
-    } catch (err) {
-      console.error("Error saving profile to localStorage:", err);
-      return false;
+  // Function to set a section as read-only when moving to the next section
+  const setCurrentSectionReadOnly = (section: string) => {
+    setReadOnlySections(prev => ({
+      ...prev,
+      [section]: true
+    }));
+  };
+  
+  // Modified validateAndNavigate function to set sections as read-only
+  const validateAndNavigate = (currentTab: string, nextTab: string) => {
+    let isValid = false;
+    
+    // Validate current tab
+    switch (currentTab) {
+      case "basic-info":
+        isValid = isBasicInfoComplete();
+        break;
+      case "professional":
+        isValid = isProfessionalInfoComplete();
+        break;
+      case "education":
+        isValid = isEducationExpComplete();
+        break;
+      case "services":
+        isValid = isServicesComplete();
+        break;
+      default:
+        isValid = true;
     }
+    
+    // Update section validity state
+    setSectionValidity(prev => ({
+      ...prev,
+      [currentTab]: isValid
+    }));
+    
+    // Navigate to next tab if valid
+    if (isValid) {
+      // Set the current section as read-only
+      setCurrentSectionReadOnly(currentTab);
+      setActiveTab(nextTab);
+    } else {
+      // Show error message
+      toast.error("Please complete all required fields before proceeding");
+      
+      // Trigger form validation to show error messages
+      form.trigger();
+    }
+  };
+  
+  // Function to split full name into first and last name
+  const splitFullName = (fullName: string) => {
+    const nameParts = fullName.trim().split(/\s+/);
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.slice(1).join(' ') || '';
+    return { firstName, lastName };
+  };
+  
+  // Function to check if the basic info section is complete
+  const isBasicInfoComplete = () => {
+    const values = form.getValues();
+    return (
+      values.firstName?.trim().length >= 2 &&
+      values.lastName?.trim().length >= 2 &&
+      /\S+@\S+\.\S+/.test(values.email) &&
+      values.location?.trim().length >= 2 &&
+      values.gender?.trim().length > 0 &&
+      values.languages?.length > 0
+    );
+  };
+
+  // Function to check if the professional info section is complete
+  const isProfessionalInfoComplete = () => {
+    const values = form.getValues();
+    return (
+      values.bio?.trim().length >= 20 &&
+      values.specialty?.trim().length >= 3
+    );
+  };
+
+  // Function to check if the education and experience section is complete
+  const isEducationExpComplete = () => {
+    const values = form.getValues();
+    
+    // Check if at least one education entry is complete
+    const hasCompleteEducation = values.education?.some(
+      edu => edu.university?.trim().length >= 2 && 
+             edu.degree?.trim().length >= 2 && 
+             edu.period?.trim().length >= 2
+    );
+    
+    // Check if at least one experience entry is complete
+    const hasCompleteExperience = values.experience?.some(
+      exp => exp.company?.trim().length >= 2 && 
+             exp.position?.trim().length >= 2 && 
+             exp.period?.trim().length >= 2
+    );
+    
+    return hasCompleteEducation && hasCompleteExperience;
+  };
+
+  // Function to check if the services section is complete
+  const isServicesComplete = () => {
+    const values = form.getValues();
+    return values.availability_status?.trim().length > 0;
   };
   
   // Fetch profile on component mount
@@ -494,7 +778,7 @@ export default function ProfileEditPage() {
           </div>
         ) : profile ? (
           <div className="space-y-6">
-            <ProfileCompletion profile={profile} />
+            <ProfileCompletion profile={profile} sectionValidity={sectionValidity} />
             
             <Form {...form}>
               <form onSubmit={form.handleSubmit(onSubmit)}>
@@ -575,20 +859,46 @@ export default function ProfileEditPage() {
                           </div>
                         </div>
                       
-                        {/* Name */}
-                        <FormField
-                          control={form.control}
-                          name="full_name"
-                          render={({ field }) => (
-                            <FormItem>
-                              <FormLabel>Full Name</FormLabel>
-                              <FormControl>
-                                <Input placeholder="Dr. Jane Smith" {...field} />
-                              </FormControl>
-                              <FormMessage />
-                            </FormItem>
-                          )}
-                        />
+                        {/* Name - split into first name and last name */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <FormField
+                            control={form.control}
+                            name="firstName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>First Name</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="First name"
+                                    {...field}
+                                    disabled={readOnlySections["basic-info"]}
+                                    className={readOnlySections["basic-info"] ? "bg-slate-50" : ""}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                          
+                          <FormField
+                            control={form.control}
+                            name="lastName"
+                            render={({ field }) => (
+                              <FormItem>
+                                <FormLabel>Last Name</FormLabel>
+                                <FormControl>
+                                  <Input
+                                    placeholder="Last name"
+                                    {...field}
+                                    disabled={readOnlySections["basic-info"]}
+                                    className={readOnlySections["basic-info"] ? "bg-slate-50" : ""}
+                                  />
+                                </FormControl>
+                                <FormMessage />
+                              </FormItem>
+                            )}
+                          />
+                        </div>
                         
                         {/* Email */}
                         <FormField
@@ -598,7 +908,7 @@ export default function ProfileEditPage() {
                             <FormItem>
                               <FormLabel>Email</FormLabel>
                               <FormControl>
-                                <Input placeholder="your.email@example.com" {...field} />
+                                <Input {...field} disabled className="bg-muted cursor-not-allowed" />
                               </FormControl>
                               <FormMessage />
                             </FormItem>
@@ -630,6 +940,34 @@ export default function ProfileEditPage() {
                               <FormControl>
                                 <Input placeholder="City, Country" {...field} />
                               </FormControl>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                        
+                        {/* Gender */}
+                        <FormField
+                          control={form.control}
+                          name="gender"
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>Gender</FormLabel>
+                              <Select 
+                                value={field.value} 
+                                onValueChange={field.onChange}
+                              >
+                                <FormControl>
+                                  <SelectTrigger>
+                                    <SelectValue placeholder="Select your gender" />
+                                  </SelectTrigger>
+                                </FormControl>
+                                <SelectContent>
+                                  <SelectItem value="male">Male</SelectItem>
+                                  <SelectItem value="female">Female</SelectItem>
+                                  <SelectItem value="non-binary">Non-binary</SelectItem>
+                                  <SelectItem value="prefer-not-to-say">Prefer not to say</SelectItem>
+                                </SelectContent>
+                              </Select>
                               <FormMessage />
                             </FormItem>
                           )}
@@ -672,7 +1010,11 @@ export default function ProfileEditPage() {
                       <Button type="button" variant="outline" onClick={() => navigate('/mood-mentor-dashboard')}>
                         Cancel
                       </Button>
-                      <Button type="button" onClick={() => setActiveTab("professional")}>
+                      <Button 
+                        type="button" 
+                        onClick={() => validateAndNavigate("basic-info", "professional")}
+                        disabled={!sectionValidity["basic-info"]}
+                      >
                         Next: Professional Info
                       </Button>
                     </div>
@@ -745,9 +1087,8 @@ export default function ProfileEditPage() {
                           <Label>Areas of Specialization</Label>
                           <div className="flex flex-wrap gap-2 mt-1.5">
                             {[
-                              "Depression", "Anxiety", "Trauma", "PTSD", "Stress", 
-                              "Grief", "Relationships", "Family Issues", "Self-Esteem",
-                              "Addiction", "Youth Counseling", "Crisis Intervention"
+                              "Depression", "Anxiety", "Trauma", "PTSD", "Stress Management", 
+                              "Grief", "Addiction", "Self-Esteem", "General Mental Health"
                             ].map((specialty) => (
                               <div 
                                 key={specialty}
@@ -776,7 +1117,11 @@ export default function ProfileEditPage() {
                       <Button type="button" variant="outline" onClick={() => setActiveTab("basic-info")}>
                         Previous: Basic Info
                       </Button>
-                      <Button type="button" onClick={() => setActiveTab("education")}>
+                      <Button 
+                        type="button" 
+                        onClick={() => validateAndNavigate("professional", "education")}
+                        disabled={!sectionValidity["professional"]}
+                      >
                         Next: Education & Experience
                       </Button>
                     </div>
@@ -968,7 +1313,11 @@ export default function ProfileEditPage() {
                       <Button type="button" variant="outline" onClick={() => setActiveTab("professional")}>
                         Previous: Professional Info
                       </Button>
-                      <Button type="button" onClick={() => setActiveTab("services")}>
+                      <Button 
+                        type="button" 
+                        onClick={() => validateAndNavigate("education", "services")}
+                        disabled={!sectionValidity["education"]}
+                      >
                         Next: Services
                       </Button>
                     </div>
@@ -1066,10 +1415,14 @@ export default function ProfileEditPage() {
                     </Card>
                     
                     <div className="flex items-center justify-between pt-6">
-                      <Button type="button" variant="outline" onClick={() => navigate('/mood-mentor-dashboard')}>
-                        Cancel
+                      <Button type="button" variant="outline" onClick={() => setActiveTab("education")}>
+                        Previous: Education & Experience
                       </Button>
-                      <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white" disabled={isSaving}>
+                      <Button 
+                        type="submit" 
+                        className="bg-blue-600 hover:bg-blue-700 text-white" 
+                        disabled={isSaving || !sectionValidity["services"]}
+                      >
                         {isSaving ? (
                           <>Saving...</>
                         ) : (

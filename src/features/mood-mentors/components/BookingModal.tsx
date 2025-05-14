@@ -58,14 +58,14 @@ const timeSlots = [
 interface BookingModalProps {
   isOpen: boolean;
   onClose: () => void;
-  ambassadorId: string;
+  moodMentorId: string;
   ambassadorName: string;
 }
 
 export function BookingModal({
   isOpen,
   onClose,
-  ambassadorId,
+  moodMentorId,
   ambassadorName,
 }: BookingModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -86,7 +86,7 @@ export function BookingModal({
 
       await moodMentorService.createBooking({
         userId: user.id,
-        ambassadorId,
+        moodMentorId,
         sessionDate: format(values.date, 'yyyy-MM-dd'),
         sessionTime: values.time,
         notes: values.notes,

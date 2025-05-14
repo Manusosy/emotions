@@ -32,7 +32,7 @@ export default function BookingButton({
       <BookingModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        ambassadorId={mentorId}
+        moodMentorId={mentorId}
         ambassadorName={mentorName}
       />
     </>

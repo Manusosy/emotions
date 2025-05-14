@@ -7,6 +7,18 @@ import { SUPABASE_URL, SUPABASE_KEY } from '@/lib/environment';
  * This can help when the connection pool gets stale or connections time out
  */
 export async function GET() {
+  // Define response headers up front to ensure they're included in all responses
+  const headers = {
+    'Content-Type': 'application/json',
+    'Cache-Control': 'no-cache, no-store, must-revalidate',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    // Add CORS headers
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Accept'
+  };
+
   try {
     console.log('Attempting to establish a fresh database connection...');
     
@@ -16,7 +28,12 @@ export async function GET() {
         method: 'HEAD',
         mode: 'no-cors',
         cache: 'no-store',
-        headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
+        headers: { 
+          'Cache-Control': 'no-cache', 
+          'Pragma': 'no-cache',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
+        },
         signal: AbortSignal.timeout(5000)
       });
       
@@ -32,7 +49,7 @@ export async function GET() {
           type: 'connectivity'
         },
         timestamp: new Date().toISOString()
-      }, { status: 503 });
+      }, { status: 503, headers });
     }
     
     // Create a completely new client instance with robust configuration
@@ -46,7 +63,9 @@ export async function GET() {
         headers: {
           'Cache-Control': 'no-cache',
           'Pragma': 'no-cache',
-          'X-Client-Info': 'supabase-js/2.x'
+          'X-Client-Info': 'supabase-js/2.x',
+          'apikey': SUPABASE_KEY,
+          'Authorization': `Bearer ${SUPABASE_KEY}`
         },
         fetch: (url, options) => {
           console.log(`Making Supabase request to: ${typeof url === 'string' ? url : 'fetch request'}`);
@@ -55,10 +74,15 @@ export async function GET() {
           const controller = new AbortController();
           const timeoutId = setTimeout(() => controller.abort(), 10000);
           
-          // @ts-ignore - Merge the signal with any existing options
+          // Ensure the API key is included in each request
           const mergedOptions = {
             ...options,
-            signal: controller.signal
+            signal: controller.signal,
+            headers: {
+              ...options?.headers,
+              'apikey': SUPABASE_KEY,
+              'Authorization': `Bearer ${SUPABASE_KEY}`
+            }
           };
           
           return fetch(url, mergedOptions)
@@ -67,6 +91,12 @@ export async function GET() {
               
               // Debug response status
               console.log(`Supabase response status: ${response.status}`);
+              
+              // Check for non-success status code
+              if (response.status >= 400) {
+                console.error(`Supabase returned error status: ${response.status}`);
+                throw new Error(`Supabase responded with error status: ${response.status}`);
+              }
               
               // Check if we're getting HTML instead of JSON
               if (response.headers.get('content-type')?.includes('text/html')) {
@@ -100,12 +130,12 @@ export async function GET() {
           success: false,
           message: 'Failed to establish a fresh database connection',
           error: {
-            message: error.message,
-            code: error.code,
+            message: error.message || 'Database connection error',
+            code: error.code || 'UNKNOWN',
             details: error.details || 'No additional details'
           },
           timestamp: new Date().toISOString()
-        }, { status: 500 });
+        }, { status: 500, headers });
       }
       
       // Update the global supabase instance in memory
@@ -121,7 +151,7 @@ export async function GET() {
           url: SUPABASE_URL.replace(/^(https?:\/\/[^\/]+).*$/, '$1'), // Only show domain, not full URL with key
           timestamp: new Date().toISOString()
         }
-      });
+      }, { headers });
     } catch (queryError: any) {
       console.error('Fresh client query failed:', queryError.message);
       
@@ -130,10 +160,11 @@ export async function GET() {
         message: 'Failed to query with fresh database connection',
         error: {
           message: queryError.message || 'Unknown query error',
+          type: queryError.name || 'QueryError',
           stack: process.env.NODE_ENV === 'development' ? queryError.stack : undefined
         },
         timestamp: new Date().toISOString()
-      }, { status: 500 });
+      }, { status: 500, headers });
     }
   } catch (error: any) {
     console.error('Unexpected error in db-fix:', error);
@@ -143,9 +174,23 @@ export async function GET() {
       message: 'An unexpected error occurred while fixing database connection',
       error: {
         message: error.message || 'Unknown error',
+        type: error.name || 'Error',
         stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
       },
       timestamp: new Date().toISOString()
-    }, { status: 500 });
+    }, { status: 500, headers });
   }
+}
+
+// Handle OPTIONS requests for CORS preflight
+export async function OPTIONS() {
+  return NextResponse.json({}, { 
+    status: 200,
+    headers: {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept',
+      'Access-Control-Max-Age': '86400'
+    }
+  });
 } 

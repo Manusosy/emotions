@@ -19,4 +19,9 @@ const getEnv = (key: string, defaultValue?: string): string => {
 };
 
 export const SUPABASE_URL = getEnv('SUPABASE_URL', 'https://crpvbznpatzymwfbjilc.supabase.co');
-export const SUPABASE_KEY = getEnv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk'); 
+export const SUPABASE_KEY = getEnv('SUPABASE_KEY', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk');
+
+// Log environment info for debugging
+if (typeof window !== 'undefined') {
+  console.log(`Supabase initialized with URL: ${SUPABASE_URL.substring(0, 30)}...`);
+} 

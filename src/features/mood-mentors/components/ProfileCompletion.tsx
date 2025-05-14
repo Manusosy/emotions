@@ -1,30 +1,36 @@
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CheckCircle2, Circle } from "lucide-react";
+import { CheckCircle2, AlertCircle } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 
 interface ProfileCompletionProps {
   profile: any;
+  sectionValidity?: Record<string, boolean>;
 }
 
-export function ProfileCompletion({ profile }: ProfileCompletionProps) {
+export function ProfileCompletion({ profile, sectionValidity }: ProfileCompletionProps) {
   const sections = [
     {
       name: "Basic Information",
-      fields: ["full_name", "email", "phone_number", "location", "avatar_url"],
+      key: "basic-info",
+      fields: ["firstName", "lastName", "email", "phone_number", "location", "avatar_url", "gender"],
       completed: 0
     },
     {
       name: "Professional Information",
+      key: "professional",
       fields: ["bio", "specialty", "specialties", "therapyTypes", "languages"],
       completed: 0
     },
     {
       name: "Education & Experience",
+      key: "education",
       fields: ["education", "experience", "awards"],
       completed: 0
     },
     {
       name: "Availability & Fees",
+      key: "services",
       fields: ["availability_status", "consultation_fee"],
       completed: 0
     }
@@ -53,35 +59,46 @@ export function ProfileCompletion({ profile }: ProfileCompletionProps) {
   const overallCompletion = Math.round((totalCompleted / totalFields) * 100);
 
   return (
-    <Card className="mb-6">
-      <CardHeader>
+    <Card className="mb-6 border-blue-100">
+      <CardHeader className="pb-2">
         <CardTitle className="text-lg font-semibold flex items-center justify-between">
           Profile Completion
           <span className="text-2xl font-bold text-blue-600">{overallCompletion}%</span>
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <Progress value={overallCompletion} className="h-2 mb-4" />
+        <Progress value={overallCompletion} className="h-3 mb-4" />
         
-        <div className="space-y-4">
-          {sections.map((section, index) => (
-            <div key={index} className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                {section.completed === 100 ? (
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                ) : (
-                  <Circle className="h-5 w-5 text-gray-300" />
+        {sectionValidity && overallCompletion < 100 && (
+          <div className="space-y-2 mt-2">
+            {sections.map((section) => (
+              <div 
+                key={section.key} 
+                className={`flex items-center justify-between text-sm ${
+                  sectionValidity[section.key] ? 'text-green-600' : 'text-gray-600'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  {sectionValidity[section.key] ? (
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  ) : (
+                    <AlertCircle className="h-4 w-4 text-amber-500" />
+                  )}
+                  <span>{section.name}</span>
+                </div>
+                {!sectionValidity[section.key] && (
+                  <Badge variant="outline" className="text-xs font-normal text-amber-600 border-amber-300 bg-amber-50">
+                    Required
+                  </Badge>
                 )}
-                <span className="text-sm font-medium">{section.name}</span>
               </div>
-              <span className="text-sm text-gray-500">{Math.round(section.completed)}%</span>
-            </div>
-          ))}
-        </div>
-
+            ))}
+          </div>
+        )}
+        
         {overallCompletion < 100 && (
-          <p className="mt-4 text-sm text-amber-600">
-            Complete your profile to appear in the ambassador listings
+          <p className="text-sm text-blue-600 font-medium mt-4">
+            Complete your profile to appear in the mood mentor listings
           </p>
         )}
       </CardContent>

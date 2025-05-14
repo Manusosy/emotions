@@ -10,6 +10,7 @@
     "dev": "vite",
     "api": "node server.js",
     "dev:all": "concurrently \"npm run dev\" \"npm run api\"",
+    "start": "node start-app.js",
     "build": "tsc && vite build",
     "build:vercel": "rm -rf dist && NODE_ENV=production npx tsc && vite build",
     "type-check": "tsc --noEmit",
@@ -17,7 +18,7 @@
     "preview": "vite preview",
     "postinstall": "node ./scripts/install-platform-deps.js",
     "setup-env": "node ./scripts/setup-env.js",
-    "start": "node ./scripts/run-with-env.js dev"
+    "start:legacy": "node ./scripts/run-with-env.js dev"
   },
   "dependencies": {
     "@babel/plugin-transform-react-jsx": "7.23.4",

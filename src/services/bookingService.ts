@@ -1,8 +1,18 @@
-import { Booking } from '@prisma/client';
+export interface Booking {
+  id: string;
+  userId: string;
+  moodMentorId: string;
+  sessionDate: string;
+  sessionTime: string;
+  notes?: string;
+  status: 'pending' | 'confirmed' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface CreateBookingData {
   userId: string;
-  ambassadorId: string;
+  moodMentorId: string;
   date: string;
   time: string;
   notes?: string;
@@ -12,7 +22,7 @@ export interface UpdateBookingData {
   date?: string;
   time?: string;
   notes?: string;
-  status?: 'PENDING' | 'CONFIRMED' | 'CANCELLED';
+  status?: 'pending' | 'confirmed' | 'cancelled';
 }
 
 export const bookingService = {
@@ -61,8 +71,8 @@ export const bookingService = {
     }
   },
 
-  async getAvailableSlots(ambassadorId: string, date: string): Promise<string[]> {
-    const response = await fetch(`/api/bookings/available-slots?ambassadorId=${ambassadorId}&date=${date}`);
+  async getAvailableSlots(moodMentorId: string, date: string): Promise<string[]> {
+    const response = await fetch(`/api/bookings/available-slots?moodMentorId=${moodMentorId}&date=${date}`);
     if (!response.ok) {
       throw new Error('Failed to fetch available slots');
     }

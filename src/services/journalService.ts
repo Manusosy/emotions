@@ -1,4 +1,11 @@
-import { JournalEntry } from '@prisma/client';
+export interface JournalEntry {
+  id: string;
+  userId: string;
+  content: string;
+  mood: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface CreateJournalEntryData {
   content: string;

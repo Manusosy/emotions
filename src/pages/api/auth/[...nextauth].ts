@@ -1,7 +1,14 @@
 import { NextAuthOptions } from 'next-auth';
 import CredentialsProvider from 'next-auth/providers/credentials';
-import prisma from '@/lib/prisma';
+import { createClient } from '@supabase/supabase-js';
 import bcrypt from 'bcryptjs';
+
+// Get Supabase credentials from environment variables
+const supabaseUrl = process.env.SUPABASE_URL || 'https://crpvbznpatzymwfbjilc.supabase.co';
+const supabaseKey = process.env.SUPABASE_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNycHZiem5wYXR6eW13ZmJqaWxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDY4MTYwMDQsImV4cCI6MjA2MjM5MjAwNH0.PHTIhaf_7PEICQHrGDm9mmkMtznGDvIEWmTWAmRfFEk';
+
+// Initialize Supabase client
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -16,13 +23,14 @@ export const authOptions: NextAuthOptions = {
           throw new Error('Missing credentials');
         }
 
-        const user = await prisma.user.findUnique({
-          where: {
-            email: credentials.email,
-          },
-        });
+        // Get user from Supabase
+        const { data: user, error } = await supabase
+          .from('users')
+          .select('id, email, name, password')
+          .eq('email', credentials.email)
+          .single();
 
-        if (!user) {
+        if (error || !user) {
           throw new Error('Invalid credentials');
         }
 

@@ -9,54 +9,41 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { supabase } from '../client';
+import { errorLog } from '@/utils/environment';
 
-/**
- * Mock appointments data
- */
-const mockAppointments = [
-  {
-    id: 'apt-1',
-    patient_id: 'patient-1',
-    ambassador_id: 'amb-123',
-    date: '2023-12-01',
-    time: '10:00 AM',
-    type: 'video',
-    status: 'upcoming',
-    duration: '30 min',
-    created_at: '2023-11-20T10:30:00Z',
-    updated_at: '2023-11-20T10:30:00Z',
-    notes: '',
-    cancellation_reason: null
-  },
-  {
-    id: 'apt-2',
-    patient_id: 'patient-1',
-    ambassador_id: 'amb-456',
-    date: '2023-11-28',
-    time: '2:30 PM',
-    type: 'audio',
-    status: 'upcoming',
-    duration: '45 min',
-    created_at: '2023-11-15T14:20:00Z',
-    updated_at: '2023-11-15T14:20:00Z',
-    notes: 'Follow-up session',
-    cancellation_reason: null
-  },
-  {
-    id: 'apt-3',
-    patient_id: 'patient-1',
-    ambassador_id: 'amb-789',
-    date: '2023-11-15',
-    time: '11:00 AM',
-    type: 'video',
-    status: 'completed',
-    duration: '60 min',
-    created_at: '2023-11-10T09:45:00Z',
-    updated_at: '2023-11-15T12:15:00Z',
-    notes: 'Initial consultation',
-    cancellation_reason: null
-  }
-];
+interface MentorProfile {
+  id?: string;
+  user_id?: string;
+  users?: Array<{
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  }>;
+}
+
+interface PatientProfile {
+  id?: string;
+  user_id?: string;
+  users?: Array<{
+    id: string;
+    full_name: string;
+    avatar_url: string | null;
+  }>;
+}
+
+interface AppointmentData {
+  id: string;
+  start_time: string;
+  end_time: string | null;
+  status: string;
+  meeting_link: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+  mentor_profiles?: MentorProfile;
+  patient_profiles?: PatientProfile;
+}
 
 /**
  * Appointment service for handling appointment-related operations
@@ -72,16 +59,85 @@ class AppointmentService {
     try {
       console.log(`Getting appointments for patient: ${patientId}, status: ${status || 'all'}`);
       
-      // Filter appointments based on patient ID and optional status
-      let appointments = mockAppointments.filter(apt => apt.patient_id === patientId);
+      // Get patient profile ID from user ID
+      const { data: patientProfile, error: profileError } = await supabase
+        .from('patient_profiles')
+        .select('id')
+        .eq('user_id', patientId)
+        .single();
       
-      if (status) {
-        appointments = appointments.filter(apt => apt.status === status);
+      if (profileError) {
+        errorLog('Error finding patient profile:', profileError);
+        return { data: null, error: 'Patient profile not found' };
       }
       
-      return { data: appointments, error: null };
+      // Build query for appointments
+      let query = supabase
+        .from('appointments')
+        .select(`
+          id,
+          start_time,
+          end_time,
+          status,
+          meeting_link,
+          notes,
+          created_at,
+          updated_at,
+          mentor_profiles:mood_mentor_profiles(
+            id,
+            user_id,
+            users(
+              id,
+              full_name,
+              avatar_url
+            )
+          )
+        `)
+        .eq('patient_id', patientProfile.id);
+      
+      // Apply status filter if provided
+      if (status) {
+        query = query.eq('status', status);
+      }
+      
+      // Execute query
+      const { data: appointments, error } = await query.order('start_time', { ascending: true });
+      
+      if (error) {
+        errorLog('Error fetching patient appointments:', error);
+        return { data: null, error: 'Failed to retrieve appointments' };
+      }
+      
+      // Format appointments to match expected structure
+      const formattedAppointments = appointments.map((apt: AppointmentData) => {
+        const startTime = new Date(apt.start_time);
+        const mentor = apt.mentor_profiles || {} as MentorProfile;
+        const mentorUsers = mentor.users || [];
+        const user = mentorUsers.length > 0 ? mentorUsers[0] : { full_name: 'Unknown', avatar_url: null };
+        
+        return {
+          id: apt.id,
+          patient_id: patientProfile.id,
+          ambassador_id: mentor.id || '',
+          date: startTime.toISOString().split('T')[0],
+          time: startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: apt.meeting_link ? 'video' : 'in-person',
+          status: apt.status,
+          duration: apt.end_time ? 
+            Math.round((new Date(apt.end_time).getTime() - startTime.getTime()) / (1000 * 60)) + ' min' : 
+            '30 min',
+          created_at: apt.created_at,
+          updated_at: apt.updated_at,
+          notes: apt.notes || '',
+          cancellation_reason: apt.status === 'cancelled' ? (apt.notes || null) : null,
+          ambassador_name: user.full_name || 'Unknown',
+          ambassador_avatar: user.avatar_url || null
+        };
+      });
+      
+      return { data: formattedAppointments, error: null };
     } catch (error) {
-      console.error('Error getting patient appointments:', error);
+      errorLog('Error getting patient appointments:', error);
       return { data: null, error: 'Failed to retrieve appointments' };
     }
   }
@@ -96,16 +152,85 @@ class AppointmentService {
     try {
       console.log(`Getting appointments for ambassador: ${ambassadorId}, status: ${status || 'all'}`);
       
-      // Filter appointments based on ambassador ID and optional status
-      let appointments = mockAppointments.filter(apt => apt.ambassador_id === ambassadorId);
+      // Get mentor profile ID from user ID
+      const { data: mentorProfile, error: profileError } = await supabase
+        .from('mood_mentor_profiles')
+        .select('id')
+        .eq('user_id', ambassadorId)
+        .single();
       
-      if (status) {
-        appointments = appointments.filter(apt => apt.status === status);
+      if (profileError) {
+        errorLog('Error finding mentor profile:', profileError);
+        return { data: null, error: 'Mentor profile not found' };
       }
       
-      return { data: appointments, error: null };
+      // Build query for appointments
+      let query = supabase
+        .from('appointments')
+        .select(`
+          id,
+          start_time,
+          end_time,
+          status,
+          meeting_link,
+          notes,
+          created_at,
+          updated_at,
+          patient_profiles:patient_id(
+            id,
+            user_id,
+            users(
+              id,
+              full_name,
+              avatar_url
+            )
+          )
+        `)
+        .eq('mentor_id', mentorProfile.id);
+      
+      // Apply status filter if provided
+      if (status) {
+        query = query.eq('status', status);
+      }
+      
+      // Execute query
+      const { data: appointments, error } = await query.order('start_time', { ascending: true });
+      
+      if (error) {
+        errorLog('Error fetching mentor appointments:', error);
+        return { data: null, error: 'Failed to retrieve appointments' };
+      }
+      
+      // Format appointments to match expected structure
+      const formattedAppointments = appointments.map((apt: AppointmentData) => {
+        const startTime = new Date(apt.start_time);
+        const patient = apt.patient_profiles || {} as PatientProfile;
+        const patientUsers = patient.users || [];
+        const user = patientUsers.length > 0 ? patientUsers[0] : { full_name: 'Unknown', avatar_url: null };
+        
+        return {
+          id: apt.id,
+          patient_id: patient.id || '',
+          ambassador_id: mentorProfile.id,
+          date: startTime.toISOString().split('T')[0],
+          time: startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          type: apt.meeting_link ? 'video' : 'in-person',
+          status: apt.status,
+          duration: apt.end_time ? 
+            Math.round((new Date(apt.end_time).getTime() - startTime.getTime()) / (1000 * 60)) + ' min' : 
+            '30 min',
+          created_at: apt.created_at,
+          updated_at: apt.updated_at,
+          notes: apt.notes || '',
+          cancellation_reason: apt.status === 'cancelled' ? (apt.notes || null) : null,
+          patient_name: user.full_name || 'Unknown',
+          patient_avatar: user.avatar_url || null
+        };
+      });
+      
+      return { data: formattedAppointments, error: null };
     } catch (error) {
-      console.error('Error getting ambassador appointments:', error);
+      errorLog('Error getting ambassador appointments:', error);
       return { data: null, error: 'Failed to retrieve appointments' };
     }
   }
@@ -119,24 +244,56 @@ class AppointmentService {
     try {
       console.log('Creating new appointment:', appointmentData);
       
-      // Generate a unique ID for the new appointment
-      const id = `apt-${uuidv4().slice(0, 8)}`;
-      
-      // Create the new appointment with current timestamps
-      const newAppointment = {
-        id,
-        ...appointmentData,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        cancellation_reason: null
+      // Prepare appointment data for insertion
+      const appointmentToInsert = {
+        mentor_id: appointmentData.ambassador_id,
+        patient_id: appointmentData.patient_id,
+        start_time: new Date(`${appointmentData.date}T${appointmentData.time}`).toISOString(),
+        end_time: appointmentData.duration ? 
+          new Date(new Date(`${appointmentData.date}T${appointmentData.time}`).getTime() + 
+            parseInt(appointmentData.duration) * 60 * 1000).toISOString() : 
+          new Date(new Date(`${appointmentData.date}T${appointmentData.time}`).getTime() + 
+            30 * 60 * 1000).toISOString(), // Default 30 minutes
+        status: appointmentData.status || 'scheduled',
+        meeting_link: appointmentData.type === 'video' ? 
+          (appointmentData.meeting_link || `https://meeting.emotions-app.com/${uuidv4()}`) : 
+          null,
+        notes: appointmentData.notes || ''
       };
       
-      // In a real implementation, this would save to a database
-      // For now, we'll just return the new appointment
+      // Insert appointment into database
+      const { data: newAppointment, error } = await supabase
+        .from('appointments')
+        .insert(appointmentToInsert)
+        .select()
+        .single();
       
-      return { data: newAppointment, error: null };
+      if (error) {
+        errorLog('Error inserting appointment:', error);
+        return { data: null, error: 'Failed to create appointment' };
+      }
+      
+      // Format and return the new appointment
+      return { 
+        data: {
+          id: newAppointment.id,
+          patient_id: appointmentData.patient_id,
+          ambassador_id: appointmentData.ambassador_id,
+          date: appointmentData.date,
+          time: appointmentData.time,
+          type: appointmentData.type,
+          status: newAppointment.status,
+          duration: appointmentData.duration || '30 min',
+          created_at: newAppointment.created_at,
+          updated_at: newAppointment.updated_at,
+          notes: newAppointment.notes,
+          cancellation_reason: null,
+          meeting_link: newAppointment.meeting_link
+        }, 
+        error: null 
+      };
     } catch (error) {
-      console.error('Error creating appointment:', error);
+      errorLog('Error creating appointment:', error);
       return { data: null, error: 'Failed to create appointment' };
     }
   }
@@ -144,7 +301,7 @@ class AppointmentService {
   /**
    * Updates the status of an appointment
    * @param appointmentId The ID of the appointment to update
-   * @param status The new status (upcoming, completed, cancelled)
+   * @param status The new status (scheduled, completed, cancelled, no_show)
    * @param cancellationReason Optional reason for cancellation
    * @returns Promise with success status and any error
    */
@@ -152,25 +309,42 @@ class AppointmentService {
     try {
       console.log(`Updating appointment ${appointmentId} status to ${status}`);
       
-      // In a real implementation, this would update the database
-      // For now, just log the change and return success
+      // Prepare update data
+      const updateData: any = {
+        status,
+        updated_at: new Date().toISOString()
+      };
       
-      if (status === 'cancelled' && !cancellationReason) {
-        console.warn('Cancellation without a reason provided');
+      // Add cancellation reason to notes if provided
+      if (status === 'cancelled' && cancellationReason) {
+        updateData.notes = cancellationReason;
+      }
+      
+      // Update appointment in database
+      const { data: updatedAppointment, error } = await supabase
+        .from('appointments')
+        .update(updateData)
+        .eq('id', appointmentId)
+        .select()
+        .single();
+      
+      if (error) {
+        errorLog('Error updating appointment status:', error);
+        return { success: false, data: null, error: 'Failed to update appointment status' };
       }
       
       return { 
         success: true, 
         data: { 
-          id: appointmentId, 
-          status, 
-          updated_at: new Date().toISOString(),
-          cancellation_reason: status === 'cancelled' ? cancellationReason : null
+          id: updatedAppointment.id, 
+          status: updatedAppointment.status, 
+          updated_at: updatedAppointment.updated_at,
+          cancellation_reason: status === 'cancelled' ? updatedAppointment.notes : null
         }, 
         error: null 
       };
     } catch (error) {
-      console.error('Error updating appointment status:', error);
+      errorLog('Error updating appointment status:', error);
       return { success: false, data: null, error: 'Failed to update appointment status' };
     }
   }
@@ -184,47 +358,140 @@ class AppointmentService {
     try {
       console.log(`Getting appointment with ID: ${appointmentId}`);
       
-      // Find the appointment in the mock data
-      const appointment = mockAppointments.find(apt => apt.id === appointmentId);
+      // Fetch appointment from database
+      const { data: appointment, error } = await supabase
+        .from('appointments')
+        .select(`
+          id,
+          start_time,
+          end_time,
+          status,
+          meeting_link,
+          notes,
+          created_at,
+          updated_at,
+          mentor_profiles:mentor_id(
+            id,
+            user_id,
+            users(
+              id,
+              full_name,
+              avatar_url
+            )
+          ),
+          patient_profiles:patient_id(
+            id,
+            user_id,
+            users(
+              id,
+              full_name,
+              avatar_url
+            )
+          )
+        `)
+        .eq('id', appointmentId)
+        .single();
       
-      if (appointment) {
-        return { data: appointment, error: null };
-      } else {
+      if (error) {
+        errorLog('Error fetching appointment by ID:', error);
+        return { data: null, error: 'Failed to retrieve appointment' };
+      }
+      
+      if (!appointment) {
         return { data: null, error: 'Appointment not found' };
       }
+      
+      // Format appointment data
+      const startTime = new Date(appointment.start_time);
+      const mentor = appointment.mentor_profiles || {} as MentorProfile;
+      const patient = appointment.patient_profiles || {} as PatientProfile;
+      const mentorUsers = mentor.users || [];
+      const patientUsers = patient.users || [];
+      const mentorUser = mentorUsers.length > 0 ? mentorUsers[0] : { full_name: 'Unknown', avatar_url: null };
+      const patientUser = patientUsers.length > 0 ? patientUsers[0] : { full_name: 'Unknown', avatar_url: null };
+      
+      const formattedAppointment = {
+        id: appointment.id,
+        patient_id: patient.id || '',
+        ambassador_id: mentor.id || '',
+        date: startTime.toISOString().split('T')[0],
+        time: startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        type: appointment.meeting_link ? 'video' : 'in-person',
+        status: appointment.status,
+        duration: appointment.end_time ? 
+          Math.round((new Date(appointment.end_time).getTime() - startTime.getTime()) / (1000 * 60)) + ' min' : 
+          '30 min',
+        created_at: appointment.created_at,
+        updated_at: appointment.updated_at,
+        notes: appointment.notes || '',
+        cancellation_reason: appointment.status === 'cancelled' ? (appointment.notes || null) : null,
+        meeting_link: appointment.meeting_link,
+        ambassador_name: mentorUser.full_name || 'Unknown',
+        ambassador_avatar: mentorUser.avatar_url || null,
+        patient_name: patientUser.full_name || 'Unknown',
+        patient_avatar: patientUser.avatar_url || null
+      };
+      
+      return { data: formattedAppointment, error: null };
     } catch (error) {
-      console.error('Error getting appointment by ID:', error);
+      errorLog('Error getting appointment by ID:', error);
       return { data: null, error: 'Failed to retrieve appointment' };
     }
   }
   
   /**
-   * Updates appointment details
+   * Updates an appointment
    * @param appointmentId The ID of the appointment to update
    * @param updates The updates to apply to the appointment
-   * @returns Promise with the updated appointment and any error
+   * @returns Promise with success status and any error
    */
   async updateAppointment(appointmentId: string, updates: any) {
     try {
-      console.log(`Updating appointment: ${appointmentId}`, updates);
+      console.log(`Updating appointment ${appointmentId}:`, updates);
       
-      // In a real implementation, this would update the database
-      // For now, return a mock success response
-      
-      return { 
-        success: true, 
-        data: { 
-          id: appointmentId,
-          ...updates,
-          updated_at: new Date().toISOString()
-        }, 
-        error: null 
+      // Prepare appointment data for update
+      const updateData: any = {
+        updated_at: new Date().toISOString()
       };
+      
+      // Map frontend fields to database fields
+      if (updates.date && updates.time) {
+        updateData.start_time = new Date(`${updates.date}T${updates.time}`).toISOString();
+        
+        if (updates.duration) {
+          const durationInMinutes = parseInt(updates.duration);
+          updateData.end_time = new Date(new Date(updateData.start_time).getTime() + 
+            durationInMinutes * 60 * 1000).toISOString();
+        }
+      }
+      
+      if (updates.status) updateData.status = updates.status;
+      if (updates.notes) updateData.notes = updates.notes;
+      if (updates.type === 'video' && updates.meeting_link) {
+        updateData.meeting_link = updates.meeting_link;
+      } else if (updates.type === 'in-person') {
+        updateData.meeting_link = null;
+      }
+      
+      // Update appointment in database
+      const { data: updatedAppointment, error } = await supabase
+        .from('appointments')
+        .update(updateData)
+        .eq('id', appointmentId)
+        .select()
+        .single();
+      
+      if (error) {
+        errorLog('Error updating appointment:', error);
+        return { success: false, data: null, error: 'Failed to update appointment' };
+      }
+      
+      return { success: true, data: updatedAppointment, error: null };
     } catch (error) {
-      console.error('Error updating appointment:', error);
+      errorLog('Error updating appointment:', error);
       return { success: false, data: null, error: 'Failed to update appointment' };
     }
   }
 }
 
-export const appointmentService = new AppointmentService(); 
+export default new AppointmentService(); 

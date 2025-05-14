@@ -54,7 +54,7 @@ export const moodMentorService = {
 
   async submitReview(data: {
     userId: string;
-    ambassadorId: string;
+    moodMentorId: string;
     bookingId: string;
     rating: number;
     comment: string;
@@ -62,14 +62,14 @@ export const moodMentorService = {
     await api.post('/api/mood-mentors/reviews', data);
   },
 
-  async getReviews(ambassadorId: string): Promise<any[]> {
-    const response = await api.get(`/api/mood-mentors/${ambassadorId}/reviews`);
+  async getReviews(moodMentorId: string): Promise<any[]> {
+    const response = await api.get(`/api/mood-mentors/${moodMentorId}/reviews`);
     return response.json();
   },
 
   async createBooking(data: {
     userId: string;
-    ambassadorId: string;
+    moodMentorId: string;
     sessionDate: string;
     sessionTime: string;
     notes: string;

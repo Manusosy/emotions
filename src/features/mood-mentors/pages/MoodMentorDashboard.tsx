@@ -40,6 +40,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { motion } from "framer-motion";
+import { api } from "@/lib/api";
 
 // Global variable to track if dialog was shown in this session
 let welcomeDialogShownInSession = false;
@@ -99,6 +100,21 @@ interface DbActivity {
 const moodMentorCompatibilityService = {
   getDashboardStats: (mentorId: string) => moodMentorService.getDashboardStats(mentorId),
   getRecentActivities: (mentorId: string, limit?: number) => moodMentorService.getRecentActivities(mentorId, limit)
+};
+
+// Utility function for handling API errors consistently
+const handleApiError = (error: any, component: string, defaultValue: any = null) => {
+  // Check if it's a network error (failed to fetch)
+  if (error?.message?.includes('Failed to fetch') || error?.name === 'TypeError') {
+    toast.error(`Network error while loading ${component}. Please check your connection.`);
+    errorLog(`Network error in ${component}:`, error);
+  } else {
+    toast.error(`Error loading ${component}`);
+    errorLog(`Error in ${component}:`, error);
+  }
+  
+  // Return the default value for the component
+  return defaultValue;
 };
 
 const MoodMentorDashboard = () => {
@@ -179,7 +195,7 @@ const MoodMentorDashboard = () => {
           setAppointmentDates([]);
         }
       } catch (error) {
-        errorLog('Error in calendar fetch:', error);
+        handleApiError(error, 'calendar appointments', []);
         setAppointmentDates([]);
       } finally {
         setCalendarLoading(false);
@@ -209,10 +225,8 @@ const MoodMentorDashboard = () => {
         const appointments = await moodMentorService.getAppointments(user.id);
         setAppointments(appointments);
       } catch (error) {
-        errorLog('Error fetching appointments:', error);
-        toast.error('Failed to load appointments');
-        // Use mock data as fallback
-        setAppointments(getMockAppointments());
+        handleApiError(error, 'appointments', getMockAppointments());
+        // Use mock data as fallback (already set in handleApiError)
       } finally {
         setIsLoading(false);
       }
@@ -403,8 +417,7 @@ const MoodMentorDashboard = () => {
         
         setStats(updatedStats);
       } catch (error) {
-        devLog('Error fetching dashboard stats:', error);
-        // Keep the default stats if there's an error
+        handleApiError(error, 'dashboard statistics', stats);
       }
     };
     
@@ -464,8 +477,7 @@ const MoodMentorDashboard = () => {
           setRecentActivities(formattedActivities);
         }
       } catch (error) {
-        devLog('Error in activity fetch:', error);
-        setRecentActivities(getMockActivities());
+        handleApiError(error, 'recent activities', getMockActivities());
       } finally {
         setActivitiesLoading(false);
       }
@@ -565,6 +577,144 @@ const MoodMentorDashboard = () => {
     const randomIndex = Math.floor(Math.random() * positiveMessages.length);
     return positiveMessages[randomIndex];
   };
+
+  // Add new state for weekly metrics
+  const [weeklyMetrics, setWeeklyMetrics] = useState({
+    newPatients: 0,
+    sessionsCompleted: 0,
+    cancellations: 0,
+    patientRetention: 0
+  });
+
+  // Add new function to fetch weekly metrics
+  useEffect(() => {
+    const fetchWeeklyMetrics = async () => {
+      if (!user) return;
+      
+      try {
+        const response = await api.get(`/api/mood-mentors/${user.id}/weekly-metrics`);
+        
+        if (!response.ok) {
+          throw new Error("Failed to get weekly metrics");
+        }
+        
+        const data = await response.json();
+        
+        setWeeklyMetrics({
+          newPatients: data.newPatients || 0,
+          sessionsCompleted: data.sessionsCompleted || 0,
+          cancellations: data.cancellations || 0,
+          patientRetention: data.patientRetention || 0
+        });
+      } catch (error) {
+        handleApiError(error, 'weekly metrics', weeklyMetrics);
+      }
+    };
+    
+    fetchWeeklyMetrics();
+  }, [user]);
+
+  // Add state for follow-ups
+  const [followUps, setFollowUps] = useState([]);
+  const [followUpsLoading, setFollowUpsLoading] = useState(true);
+
+  // Add function to fetch follow-ups
+  useEffect(() => {
+    const fetchFollowUps = async () => {
+      if (!user) return;
+      
+      setFollowUpsLoading(true);
+      try {
+        const response = await api.get(`/api/mood-mentors/${user.id}/follow-ups`);
+        
+        if (!response.ok) {
+          throw new Error("Failed to get follow-ups");
+        }
+        
+        const data = await response.json();
+        setFollowUps(data);
+      } catch (error) {
+        handleApiError(error, 'follow-ups', []);
+      } finally {
+        setFollowUpsLoading(false);
+      }
+    };
+    
+    fetchFollowUps();
+  }, [user]);
+
+  // Add states for professional development and support groups
+  const [professionalDevelopment, setProfessionalDevelopment] = useState([]);
+  const [supportGroups, setSupportGroups] = useState([]);
+  const [resourcesLoading, setResourcesLoading] = useState(true);
+
+  // Add function to fetch professional development courses
+  useEffect(() => {
+    const fetchResources = async () => {
+      if (!user) return;
+      
+      setResourcesLoading(true);
+      try {
+        // Fetch professional development courses
+        const coursesResponse = await api.get('/api/resources/professional-development');
+        
+        if (!coursesResponse.ok) {
+          throw new Error("Failed to get professional development courses");
+        }
+        
+        const coursesData = await coursesResponse.json();
+        setProfessionalDevelopment(coursesData);
+        
+        // Fetch support groups
+        const groupsResponse = await api.get(`/api/mood-mentors/${user.id}/support-groups`);
+        
+        if (!groupsResponse.ok) {
+          throw new Error("Failed to get support groups");
+        }
+        
+        const groupsData = await groupsResponse.json();
+        setSupportGroups(groupsData);
+      } catch (error) {
+        handleApiError(error, 'resources');
+        // Set default empty arrays if there's an error
+        setProfessionalDevelopment([]);
+        setSupportGroups([]);
+      } finally {
+        setResourcesLoading(false);
+      }
+    };
+    
+    fetchResources();
+  }, [user]);
+
+  // Add state for professional resources
+  const [professionalResources, setProfessionalResources] = useState([]);
+  const [profResourcesLoading, setProfResourcesLoading] = useState(true);
+
+  // Add function to fetch professional resources
+  useEffect(() => {
+    const fetchProfessionalResources = async () => {
+      if (!user) return;
+      
+      setProfResourcesLoading(true);
+      try {
+        const response = await api.get('/api/resources/professional');
+        
+        if (!response.ok) {
+          throw new Error("Failed to get professional resources");
+        }
+        
+        const data = await response.json();
+        setProfessionalResources(data);
+      } catch (error) {
+        handleApiError(error, 'professional resources', []);
+      } finally {
+        setProfResourcesLoading(false);
+      }
+    };
+    
+    fetchProfessionalResources();
+  }, [user]);
 
   return (
     <DashboardLayout>
@@ -936,10 +1086,10 @@ const MoodMentorDashboard = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">New Patients</span>
-                    <span className="font-medium">4</span>
+                    <span className="font-medium">{weeklyMetrics.newPatients}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full bg-blue-500 w-2/3"></div>
+                    <div className="h-1.5 rounded-full bg-blue-500" style={{ width: `${Math.min(weeklyMetrics.newPatients * 15, 100)}%` }}></div>
                   </div>
                 </div>
                 
@@ -947,10 +1097,10 @@ const MoodMentorDashboard = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Sessions Completed</span>
-                    <span className="font-medium">12</span>
+                    <span className="font-medium">{weeklyMetrics.sessionsCompleted}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full bg-green-500 w-3/4"></div>
+                    <div className="h-1.5 rounded-full bg-green-500" style={{ width: `${Math.min(weeklyMetrics.sessionsCompleted * 6, 100)}%` }}></div>
                   </div>
                 </div>
                 
@@ -958,10 +1108,10 @@ const MoodMentorDashboard = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Cancellations</span>
-                    <span className="font-medium">1</span>
+                    <span className="font-medium">{weeklyMetrics.cancellations}</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full bg-red-500 w-1/6"></div>
+                    <div className="h-1.5 rounded-full bg-red-500" style={{ width: `${Math.min(weeklyMetrics.cancellations * 20, 100)}%` }}></div>
                   </div>
                 </div>
                 
@@ -969,10 +1119,10 @@ const MoodMentorDashboard = () => {
                 <div className="space-y-2">
                   <div className="flex justify-between text-sm">
                     <span className="text-gray-600">Patient Retention</span>
-                    <span className="font-medium">92%</span>
+                    <span className="font-medium">{weeklyMetrics.patientRetention}%</span>
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full bg-purple-500 w-[92%]"></div>
+                    <div className="h-1.5 rounded-full bg-purple-500" style={{ width: `${weeklyMetrics.patientRetention}%` }}></div>
                   </div>
                 </div>
                 
@@ -982,16 +1132,32 @@ const MoodMentorDashboard = () => {
                     <Clock className="w-4 h-4 mr-1 text-amber-500" />
                     Follow-ups Needed
                   </h4>
-                  <div className="space-y-2">
-                    <div className="text-xs p-2 bg-amber-50 text-amber-700 rounded border border-amber-100">
-                      <p className="font-medium">Emma Thompson</p>
-                      <p>Missed last appointment</p>
+                  {followUpsLoading ? (
+                    <div className="animate-pulse space-y-2">
+                      <div className="h-12 bg-gray-200 rounded"></div>
+                      <div className="h-12 bg-gray-200 rounded"></div>
                     </div>
-                    <div className="text-xs p-2 bg-blue-50 text-blue-700 rounded border border-blue-100">
-                      <p className="font-medium">James Wilson</p>
-                      <p>Treatment plan review due</p>
+                  ) : followUps.length > 0 ? (
+                    <div className="space-y-2">
+                      {followUps.map((followUp, index) => (
+                        <div 
+                          key={index} 
+                          className={`text-xs p-2 ${
+                            followUp.type === 'missed' 
+                              ? 'bg-amber-50 text-amber-700 border-amber-100' 
+                              : 'bg-blue-50 text-blue-700 border-blue-100'
+                          } rounded border`}
+                        >
+                          <p className="font-medium">{followUp.patientName}</p>
+                          <p>{followUp.reason}</p>
+                        </div>
+                      ))}
                     </div>
-                  </div>
+                  ) : (
+                    <div className="text-xs p-3 bg-gray-50 text-gray-600 rounded border border-gray-100 text-center">
+                      No follow-ups needed at this time
+                    </div>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -1052,47 +1218,45 @@ const MoodMentorDashboard = () => {
               </div>
             </CardHeader>
             <CardContent className="p-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="p-3 border border-blue-100 rounded-md bg-blue-50 hover:bg-blue-100 transition-colors cursor-pointer">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-blue-500 text-white rounded-md">
-                      <Book className="h-4 w-4" />
+              {profResourcesLoading ? (
+                <div className="animate-pulse grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {[1, 2, 3, 4].map(i => (
+                    <div key={i} className="p-3 border border-gray-100 rounded-md bg-gray-50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="h-8 w-8 rounded-md bg-gray-200"></div>
+                        <div className="h-4 bg-gray-200 rounded w-3/4"></div>
+                      </div>
+                      <div className="h-3 bg-gray-200 rounded w-full mt-2"></div>
                     </div>
-                    <h4 className="font-medium text-sm">Clinical Resources</h4>
-                  </div>
-                  <p className="text-xs text-gray-600">Access therapeutic techniques, worksheets and guides</p>
+                  ))}
                 </div>
-                
-                <div className="p-3 border border-purple-100 rounded-md bg-purple-50 hover:bg-purple-100 transition-colors cursor-pointer">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-purple-500 text-white rounded-md">
-                      <Users className="h-4 w-4" />
+              ) : professionalResources.length > 0 ? (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {professionalResources.map((resource, index) => (
+                    <div 
+                      key={index} 
+                      className={`p-3 border border-${resource.colorScheme}-100 rounded-md bg-${resource.colorScheme}-50 hover:bg-${resource.colorScheme}-100 transition-colors cursor-pointer`}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className={`p-1.5 bg-${resource.colorScheme}-500 text-white rounded-md`}>
+                          {resource.icon === 'book' && <Book className="h-4 w-4" />}
+                          {resource.icon === 'users' && <Users className="h-4 w-4" />}
+                          {resource.icon === 'chart' && <BarChart3 className="h-4 w-4" />}
+                          {resource.icon === 'message' && <MessageSquare className="h-4 w-4" />}
+                        </div>
+                        <h4 className="font-medium text-sm">{resource.title}</h4>
+                      </div>
+                      <p className="text-xs text-gray-600">{resource.description}</p>
                     </div>
-                    <h4 className="font-medium text-sm">Support Network</h4>
-                  </div>
-                  <p className="text-xs text-gray-600">Connect with other mental health professionals</p>
+                  ))}
                 </div>
-                
-                <div className="p-3 border border-emerald-100 rounded-md bg-emerald-50 hover:bg-emerald-100 transition-colors cursor-pointer">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-emerald-500 text-white rounded-md">
-                      <BarChart3 className="h-4 w-4" />
-                    </div>
-                    <h4 className="font-medium text-sm">Assessment Tools</h4>
-                  </div>
-                  <p className="text-xs text-gray-600">Standardized scales and assessment instruments</p>
+              ) : (
+                <div className="text-center py-6">
+                  <Book className="h-12 w-12 text-gray-300 mx-auto mb-2" />
+                  <h3 className="text-gray-700 font-medium mb-1">No resources available</h3>
+                  <p className="text-gray-500 text-sm">Professional resources will appear here</p>
                 </div>
-                
-                <div className="p-3 border border-amber-100 rounded-md bg-amber-50 hover:bg-amber-100 transition-colors cursor-pointer">
-                  <div className="flex items-center gap-2 mb-2">
-                    <div className="p-1.5 bg-amber-500 text-white rounded-md">
-                      <MessageSquare className="h-4 w-4" />
-                    </div>
-                    <h4 className="font-medium text-sm">Communication Guide</h4>
-                  </div>
-                  <p className="text-xs text-gray-600">Best practices for patient communication</p>
-                </div>
-              </div>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -1109,17 +1273,30 @@ const MoodMentorDashboard = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Continue learning and enhance your therapeutic skills with our specialized courses and resources.
               </p>
-              <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="text-sm font-medium">Trauma-Informed Care</h4>
-                    <p className="text-xs text-gray-500">4 hours course • Certificate available</p>
-                  </div>
-                  <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200">
-                    New
-                  </Badge>
+              {resourcesLoading ? (
+                <div className="animate-pulse bg-white/80 rounded-md p-3 mb-3 shadow-sm">
+                  <div className="h-5 bg-gray-200 rounded mb-2 w-3/4"></div>
+                  <div className="h-4 bg-gray-200 rounded w-1/2"></div>
                 </div>
-              </div>
+              ) : professionalDevelopment.length > 0 ? (
+                <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="text-sm font-medium">{professionalDevelopment[0].title}</h4>
+                      <p className="text-xs text-gray-500">{professionalDevelopment[0].duration} • {professionalDevelopment[0].type}</p>
+                    </div>
+                    <Badge className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200">
+                      {professionalDevelopment[0].badge}
+                    </Badge>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
+                  <div className="text-center text-gray-500 text-sm">
+                    No courses available at this time
+                  </div>
+                </div>
+              )}
               <Button variant="outline" className="w-full mt-2 border-indigo-200 text-indigo-700 hover:bg-indigo-100">
                 Browse More Courses
               </Button>
@@ -1136,17 +1313,30 @@ const MoodMentorDashboard = () => {
               <p className="text-sm text-gray-600 mb-4">
                 Lead and participate in community support groups to extend your reach and impact.
               </p>
-              <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
-                <div className="flex justify-between items-start">
-                  <div>
-                    <h4 className="text-sm font-medium">Anxiety Management</h4>
-                    <p className="text-xs text-gray-500">Tuesdays @ 7 PM • 12 participants</p>
-                  </div>
-                  <Badge className="bg-green-100 text-green-700 hover:bg-green-200">
-                    Active
-                  </Badge>
+              {resourcesLoading ? (
+                <div className="animate-pulse bg-white/80 rounded-md p-3 mb-3 shadow-sm">
+                  <div className="h-5 bg-gray-200 rounded mb-2 w-3/4"></div>
+                  <div className="h-4 bg-gray-200 rounded w-1/2"></div>
                 </div>
-              </div>
+              ) : supportGroups.length > 0 ? (
+                <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <h4 className="text-sm font-medium">{supportGroups[0].name}</h4>
+                      <p className="text-xs text-gray-500">{supportGroups[0].schedule} • {supportGroups[0].participants} participants</p>
+                    </div>
+                    <Badge className="bg-green-100 text-green-700 hover:bg-green-200">
+                      {supportGroups[0].status}
+                    </Badge>
+                  </div>
+                </div>
+              ) : (
+                <div className="bg-white rounded-md p-3 mb-3 shadow-sm">
+                  <div className="text-center text-gray-500 text-sm">
+                    No support groups available
+                  </div>
+                </div>
+              )}
               <Button variant="outline" className="w-full mt-2 border-purple-200 text-purple-700 hover:bg-purple-100">
                 Manage Support Groups
               </Button>

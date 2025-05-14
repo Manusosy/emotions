@@ -42,7 +42,9 @@ export class AuthService {
         lastName: userData.lastName,
         role,
         country: userData.country,
-        gender: userData.gender || null
+        gender: userData.gender || null,
+        specialty: userData.specialty || null,
+        specialties: userData.specialties || null
       };
       
       // Call Supabase auth service
@@ -99,6 +101,21 @@ export class AuthService {
         };
       }
       
+      // Get a properly formatted full name
+      let fullName = userData.user_metadata?.full_name || '';
+      
+      // If full_name doesn't contain a space (likely just first name), try to build it
+      if (!fullName.includes(' ')) {
+        if (userData.user_metadata?.first_name && userData.user_metadata?.last_name) {
+          fullName = `${userData.user_metadata.first_name} ${userData.user_metadata.last_name}`;
+        } else if (userData.user_metadata?.firstName && userData.user_metadata?.lastName) {
+          fullName = `${userData.user_metadata.firstName} ${userData.user_metadata.lastName}`;
+        } else if (!fullName) {
+          // If still no full name, use email as fallback
+          fullName = userData.email?.split('@')[0] || 'User';
+        }
+      }
+      
       // Return successful response
       return { 
         success: true, 
@@ -107,7 +124,7 @@ export class AuthService {
             id: userData.id,
             email: userData.email,
             role: userData.user_metadata?.role,
-            full_name: userData.user_metadata?.full_name,
+            full_name: fullName,
             firstName: userData.user_metadata?.first_name,
             lastName: userData.user_metadata?.last_name
           },
@@ -179,6 +196,21 @@ export class AuthService {
       // Format user data
       const userData = userResponse.data.user;
       
+      // Get a properly formatted full name
+      let fullName = userData.user_metadata?.full_name || '';
+      
+      // If full_name doesn't contain a space (likely just first name), try to build it
+      if (!fullName.includes(' ')) {
+        if (userData.user_metadata?.first_name && userData.user_metadata?.last_name) {
+          fullName = `${userData.user_metadata.first_name} ${userData.user_metadata.last_name}`;
+        } else if (userData.user_metadata?.firstName && userData.user_metadata?.lastName) {
+          fullName = `${userData.user_metadata.firstName} ${userData.user_metadata.lastName}`;
+        } else if (!fullName) {
+          // If still no full name, use email as fallback
+          fullName = userData.email?.split('@')[0] || 'User';
+        }
+      }
+      
       return { 
         success: true, 
         data: {
@@ -186,7 +218,7 @@ export class AuthService {
             id: userData.id,
             email: userData.email,
             role: userData.user_metadata?.role,
-            full_name: userData.user_metadata?.full_name,
+            full_name: fullName,
             firstName: userData.user_metadata?.first_name,
             lastName: userData.user_metadata?.last_name
           },

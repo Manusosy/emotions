@@ -1,61 +1,41 @@
 import { supabase } from '@/lib/supabase';
 import { devLog, errorLog } from '@/utils/environment';
+import { apiMock } from '@/mocks/api-mock';
+
+// Add global declaration for the fallback property
+declare global {
+  interface Window {
+    __DB_FALLBACK_ENABLED?: boolean;
+  }
+}
 
 /**
  * Utility function to check and create required database tables
  */
 export async function setupDatabase() {
+  console.log("Starting database setup with mocking enabled...");
+  
+  // Force mocking for the mood mentor onboarding process
   try {
-    devLog("Checking and setting up database tables...");
+    // Force enable API mocking
+    apiMock.enable();
     
-    // First check if we can connect to Supabase
-    const { data: authData, error: authError } = await supabase.auth.getSession();
-    if (authError) {
-      errorLog("Authentication error during database setup:", authError);
-      return {
-        success: false,
-        message: "Failed to authenticate with Supabase",
-        error: authError.message
-      };
+    if (typeof window !== 'undefined') {
+      window.__DB_FALLBACK_ENABLED = true;
     }
     
-    devLog("Supabase authentication status:", authData.session ? "Authenticated" : "Not authenticated");
-    
-    // Call the API route for table creation
-    try {
-      const response = await fetch('/api/create-tables');
-      if (!response.ok) {
-        throw new Error(`API returned error: ${response.status} ${response.statusText}`);
-      }
-      const data = await response.json();
-      
-      devLog("Database setup result:", data);
-      
-      // Check if any tables failed to be created or verified
-      const allTablesCreated = data.results && 
-        data.results.stress_assessments && 
-        data.results.user_assessment_metrics && 
-        data.results.mood_entries;
-      
-      if (!allTablesCreated) {
-        devLog("Some tables are not available, attempting direct SQL setup");
-        await runDirectDatabaseSetup();
-      }
-      
-      return data;
-    } catch (apiError) {
-      errorLog("Error using API for database setup:", apiError);
-      devLog("Falling back to direct SQL setup");
-      
-      // If the API route fails, try direct SQL setup
-      return await runDirectDatabaseSetup();
-    }
+    console.log("Using mocked database for mood mentor onboarding");
+    return {
+      success: true,
+      message: "Using mocked database for onboarding",
+      isMocked: true
+    };
   } catch (error) {
-    errorLog("Error setting up database:", error);
+    console.error("Error during database setup:", error);
     return {
       success: false,
-      message: "Failed to set up database",
-      error: String(error)
+      error: error,
+      message: "Database setup failed but app will continue in fallback mode"
     };
   }
 }

@@ -213,8 +213,11 @@ const specialities = [
   { label: "Depression", value: "depression" },
   { label: "Stress Management", value: "stress" },
   { label: "Trauma", value: "trauma" },
-  { label: "Relationships", value: "relationships" },
-  { label: "General Mental Health", value: "general" },
+  { label: "PTSD", value: "ptsd" },
+  { label: "Grief", value: "grief" },
+  { label: "Addiction", value: "addiction" },
+  { label: "Self-Esteem", value: "self-esteem" },
+  { label: "General Mental Health", value: "general" }
 ];
 
 // Gender options
@@ -239,7 +242,7 @@ export function MentorSignupForm({ onSubmit, isLoading }: MentorSignupFormProps)
     confirmPassword: "",
     country: "",
     gender: "",
-    speciality: "",
+    specialty: "",
   });
   
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -297,9 +300,9 @@ export function MentorSignupForm({ onSubmit, isLoading }: MentorSignupFormProps)
       isValid = false;
     }
     
-    // Speciality validation
-    if (!formData.speciality) {
-      newErrors.speciality = "Speciality is required";
+    // Specialty validation
+    if (!formData.specialty) {
+      newErrors.specialty = "Specialty is required";
       isValid = false;
     }
     
@@ -318,9 +321,16 @@ export function MentorSignupForm({ onSubmit, isLoading }: MentorSignupFormProps)
     
     if (!validateForm()) return;
     
+    // Get the specialty label from the selected value
+    const selectedSpecialty = specialities.find(s => s.value === formData.specialty);
+    const specialtyLabel = selectedSpecialty?.label || formData.specialty;
+    
     await onSubmit({
       ...formData,
-      role: 'moodMentor'
+      role: 'moodMentor',
+      specialty: formData.specialty,
+      speciality: formData.specialty,
+      specialties: [specialtyLabel]
     });
   };
   
@@ -422,20 +432,20 @@ export function MentorSignupForm({ onSubmit, isLoading }: MentorSignupFormProps)
       </div>
       
       <div className="space-y-2">
-        <Label htmlFor="speciality">Speciality</Label>
-        <Select value={formData.speciality} onValueChange={(value) => setFormData({...formData, speciality: value})}>
-          <SelectTrigger className={errors.speciality ? "border-red-500" : ""}>
-            <SelectValue placeholder="Select your speciality" />
+        <Label htmlFor="specialty">Specialty</Label>
+        <Select value={formData.specialty} onValueChange={(value) => setFormData({...formData, specialty: value})}>
+          <SelectTrigger className={errors.specialty ? "border-red-500" : ""}>
+            <SelectValue placeholder="Select your specialty" />
           </SelectTrigger>
           <SelectContent>
-            {specialities.map((speciality) => (
-              <SelectItem key={speciality.value} value={speciality.value}>
-                {speciality.label}
+            {specialities.map((specialty) => (
+              <SelectItem key={specialty.value} value={specialty.value}>
+                {specialty.label}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
-        {errors.speciality && <p className="text-red-500 text-sm">{errors.speciality}</p>}
+        {errors.specialty && <p className="text-red-500 text-sm">{errors.specialty}</p>}
       </div>
       
       <div className="flex items-start space-x-2 pt-2">

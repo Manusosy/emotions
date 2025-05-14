@@ -1,4 +1,12 @@
-import { MoodEntry } from '@prisma/client';
+export interface MoodEntry {
+  id: string;
+  userId: string;
+  score: number;
+  mood: string;
+  note?: string;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface MoodSummary {
   totalEntries: number;

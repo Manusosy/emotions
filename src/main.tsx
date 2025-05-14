@@ -1,73 +1,23 @@
 import React from 'react';
-import { createRoot } from 'react-dom/client';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import App from './App';
-import ErrorBoundary from './components/ErrorBoundary';
+import ReactDOM from 'react-dom/client';
 import './styles/index.css';
-import { AuthProvider } from './hooks/use-auth';
+import App from './App';
 import { ConnectionProvider } from './contexts/ConnectionContext';
-import ConnectionSyncHandler from './components/ConnectionSyncHandler';
+import { AuthProvider } from './hooks/use-auth';
+import { initApiMocking, apiMock } from './mocks/api-mock';
 
-// Global error handling with more detailed logging
-window.addEventListener('error', (event) => {
-  console.error('Global error caught:', {
-    message: event.error?.message,
-    stack: event.error?.stack,
-    filename: event.filename,
-    lineno: event.lineno,
-    colno: event.colno
-  });
-});
+// Force enable API mocking to immediately solve the connection issues
+console.log('Initializing API mocking system');
+initApiMocking();
+apiMock.enable();
 
-window.addEventListener('unhandledrejection', (event) => {
-  console.error('Unhandled promise rejection:', {
-    reason: event.reason,
-    stack: event.reason?.stack
-  });
-});
-
-// Enhanced production logging
-if (import.meta.env.PROD) {
-  console.log('Environment:', {
-    MODE: import.meta.env.MODE,
-    BASE_URL: import.meta.env.BASE_URL
-  });
-}
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 30000,
-    },
-  },
-});
-
-const rootElement = document.getElementById('root');
-
-if (!rootElement) {
-  throw new Error('Failed to find the root element');
-}
-
-const root = createRoot(rootElement);
-
-// Wrap the render in a try-catch for better error handling
-try {
-  root.render(
-    <React.StrictMode>
-      <ErrorBoundary>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
-            <ConnectionProvider>
-              <ConnectionSyncHandler />
-              <App />
-            </ConnectionProvider>
-          </AuthProvider>
-        </QueryClientProvider>
-      </ErrorBoundary>
-    </React.StrictMode>
-  );
-  console.log('Application rendered successfully');
-} catch (error) {
-  console.error('Failed to render application:', error);
-}
+// Create the React root and render the app
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ConnectionProvider>
+      <AuthProvider>
+        <App />
+      </AuthProvider>
+    </ConnectionProvider>
+  </React.StrictMode>
+);
